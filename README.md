@@ -2,75 +2,35 @@
 
 A temporal filesystem browser over Git history.
 
-## Build
+## CLI
 
 ```sh
 make
 ```
 
-Defaults:
-- branch: `master`
-- time: current local time
+## GUI
 
-## Snapshot
+The first Lazarus GUI cut reuses `core/gtmcore.pas`.
 
-```sh
-./bin/gtm --repo /path/to/repo
-```
-
-## List
+Build it with:
 
 ```sh
-./bin/gtm --repo /path/to/repo ls /
-./bin/gtm --repo /path/to/repo ls engine/
+make gui
 ```
 
-## Cat
+Then run:
 
 ```sh
-./bin/gtm --repo /path/to/repo cat README.md
+./bin/gtm-gui
 ```
 
-## Get
+The form currently provides:
 
-```sh
-./bin/gtm --repo /path/to/repo --at "2026-09-04 12:00" get README.md old-README.md
-```
+- repository path + Browse
+- branch, default `master`
+- time, default current local time
+- Load Snapshot
+- resolved commit hash
+- root directory listing
 
-## History
-
-```sh
-./bin/gtm --repo /path/to/repo history README.md
-```
-
-## Diff
-
-Whole snapshot:
-
-```sh
-./bin/gtm --repo /path/to/repo   diff --from "2026-09-06 17:00" --to "2026-09-07 15:00"
-```
-
-Single path:
-
-```sh
-./bin/gtm --repo /path/to/repo   diff --from "2026-09-06 17:00" --to "2026-09-07 15:00" README.md
-```
-
-## Visual diff
-
-```sh
-./bin/gtm --repo /path/to/repo   vdiff --from "2026-09-06 17:00" --to "2026-09-07 15:00" README.md
-```
-
-Optional:
-
-```sh
---tool meld
-```
-
-## Structure
-
-Reusable Git/time operations live in `core/gtmcore.pas`.
-
-The CLI entry point is `src/gtm.lpr`.
+This is intentionally only the first browser slice. It does not yet navigate into directories and does not use FUSE.

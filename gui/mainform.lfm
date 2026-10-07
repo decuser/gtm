@@ -1,0 +1,95 @@
+object MainForm: TMainForm
+  Left = 300
+  Height = 600
+  Top = 180
+  Width = 900
+  Caption = 'Git Time Machine'
+  ClientHeight = 600
+  ClientWidth = 900
+  OnCreate = FormCreate
+  Position = poScreenCenter
+  LCLVersion = '3.0.0.0'
+  object RepoLabel: TLabel
+    Left = 16
+    Height = 17
+    Top = 20
+    Width = 65
+    Caption = 'Repository'
+  end
+  object RepoEdit: TEdit
+    Left = 96
+    Height = 27
+    Top = 15
+    Width = 660
+    Anchors = [akTop, akLeft, akRight]
+    TabOrder = 0
+  end
+  object BrowseButton: TButton
+    Left = 768
+    Height = 30
+    Top = 14
+    Width = 112
+    Anchors = [akTop, akRight]
+    Caption = 'Browse...'
+    OnClick = BrowseButtonClick
+    TabOrder = 1
+  end
+  object BranchLabel: TLabel
+    Left = 16
+    Height = 17
+    Top = 60
+    Width = 43
+    Caption = 'Branch'
+  end
+  object BranchEdit: TEdit
+    Left = 96
+    Height = 27
+    Top = 55
+    Width = 180
+    TabOrder = 2
+  end
+  object TimeLabel: TLabel
+    Left = 304
+    Height = 17
+    Top = 60
+    Width = 29
+    Caption = 'Time'
+  end
+  object TimeEdit: TEdit
+    Left = 344
+    Height = 27
+    Top = 55
+    Width = 220
+    TabOrder = 3
+  end
+  object LoadButton: TButton
+    Left = 584
+    Height = 30
+    Top = 54
+    Width = 120
+    Caption = 'Load Snapshot'
+    OnClick = LoadButtonClick
+    TabOrder = 4
+  end
+  object SnapshotLabel: TLabel
+    Left = 16
+    Height = 17
+    Top = 100
+    Width = 127
+    Caption = 'Snapshot: not loaded'
+  end
+  object TreeList: TListBox
+    Left = 16
+    Height = 450
+    Top = 128
+    Width = 864
+    Anchors = [akTop, akLeft, akRight, akBottom]
+    ItemHeight = 0
+    TabOrder = 5
+  end
+  object SelectDirectoryDialog1: TSelectDirectoryDialog
+    Title = 'Select Git Repository'
+    left = 816
+    top = 80
+  end
+end
