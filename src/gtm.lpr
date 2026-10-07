@@ -5,6 +5,8 @@ program gtm;
 uses
   SysUtils, gtmcore;
 
+{$I gtmversion.inc}
+
 procedure Usage;
 begin
   WriteLn('Usage:');
@@ -23,6 +25,12 @@ var
   CommitHash, FromAt, ToAt, ToolName: string;
   I: Integer;
 begin
+  if (ParamCount = 1) and (ParamStr(1) = '--version') then
+  begin
+    WriteLn('gtm ', GTMVersion);
+    Halt(0);
+  end;
+
   Repo := '';
   BranchName := 'master';
   RequestedAt := '';

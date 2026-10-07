@@ -188,7 +188,7 @@ object MainForm: TMainForm
     Left = 16
     Height = 298
     Top = 320
-    Width = 864
+    Width = 734
     Anchors = [akTop, akLeft, akRight, akBottom]
     ItemHeight = 20
     OnDblClick = TreeListDblClick
@@ -196,6 +196,45 @@ object MainForm: TMainForm
     PopupMenu = FilePopup
     Style = lbOwnerDrawFixed
     TabOrder = 8
+  end
+  object VerticalTimeTrackBar: TTrackBar
+    Left = 746
+    Height = 298
+    Top = 320
+    Width = 40
+    Anchors = [akTop, akRight, akBottom]
+    Max = 1000
+    Orientation = trVertical
+    TickStyle = tsNone
+    OnChange = VerticalTimeTrackBarChange
+    OnMouseDown = VerticalTimeTrackBarMouseDown
+    OnMouseUp = VerticalTimeTrackBarMouseUp
+    OnKeyUp = VerticalTimeTrackBarKeyUp
+    TabOrder = 9
+  end
+  object TimeNowLabel: TLabel
+    Left = 737
+    Height = 17
+    Top = 300
+    Width = 80
+    Anchors = [akTop, akRight]
+    Caption = 'Now'
+  end
+  object TimeStartLabel: TLabel
+    Left = 720
+    Height = 17
+    Top = 622
+    Width = 100
+    Anchors = [akRight, akBottom]
+    Caption = ''
+  end
+  object TimeCurrentLabel: TLabel
+    Left = 794
+    Height = 17
+    Top = 460
+    Width = 110
+    Anchors = [akRight]
+    Caption = ''
   end
   object SelectDirectoryDialog1: TSelectDirectoryDialog
     Title = 'Select Git Repository'

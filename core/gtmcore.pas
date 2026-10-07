@@ -14,6 +14,9 @@ function ResolveCommit(const Repo, BranchName, RequestedAt: string): string;
 function ResolveFirstParentCommit(const Repo, BranchName,
   RequestedAt: string): string;
 function CommitTime(const Repo, CommitHash: string): string;
+function CommitUnixTime(const Repo, CommitHash: string): Int64;
+function ResolveCommitAtUnixTime(const Repo, BranchName: string;
+  UnixTime: Int64): string;
 function CommitSubject(const Repo, CommitHash: string): string;
 procedure BuildTimeline(const Repo, BranchName: string; Commits: TStrings);
 procedure BuildTimelineWindow(const Repo, BranchName, CenterCommit: string;
@@ -230,6 +233,43 @@ begin
 
   Result := CleanLine(OutText);
 end;
+
+function CommitUnixTime(const Repo, CommitHash: string): Int64;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := 0;
+
+  if not RunGit(Repo, ['show', '-s', '--format=%ct', CommitHash],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Result := StrToInt64Def(CleanLine(OutText), 0);
+end;
+
+function ResolveCommitAtUnixTime(const Repo, BranchName: string;
+  UnixTime: Int64): string;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := '';
+
+  if not RunGit(Repo,
+    ['rev-list', '-1', '--before=@' + IntToStr(UnixTime), BranchName],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Result := CleanLine(OutText);
+end;
+
 
 function CommitSubject(const Repo, CommitHash: string): string;
 var

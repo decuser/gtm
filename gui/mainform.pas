@@ -5,7 +5,7 @@ unit mainform;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, StdCtrls, Dialogs, ComCtrls, LCLIntf,
+  Classes, SysUtils, DateUtils, Forms, Controls, StdCtrls, Dialogs, ComCtrls, LCLIntf,
   Graphics, Menus, Process, ExtCtrls, gtmcore;
 
 type
@@ -36,6 +36,10 @@ type
     TimeEdit: TEdit;
     TimeLabel: TLabel;
     TimeTrackBar: TTrackBar;
+    VerticalTimeTrackBar: TTrackBar;
+    TimeNowLabel: TLabel;
+    TimeStartLabel: TLabel;
+    TimeCurrentLabel: TLabel;
     TreeList: TListBox;
     SelectDirectoryDialog1: TSelectDirectoryDialog;
     procedure BrowseButtonClick(Sender: TObject);
@@ -51,12 +55,20 @@ type
     procedure NavButtonMouseUp(Sender: TObject; Button: TMouseButton;
       Shift: TShiftState; X, Y: Integer);
     procedure NavTimerTimer(Sender: TObject);
+    procedure TimePreviewTimerTimer(Sender: TObject);
     procedure TimeTrackBarChange(Sender: TObject);
     procedure TimeTrackBarMouseDown(Sender: TObject; Button: TMouseButton;
       Shift: TShiftState; X, Y: Integer);
     procedure TimeTrackBarMouseUp(Sender: TObject; Button: TMouseButton;
       Shift: TShiftState; X, Y: Integer);
     procedure TimeTrackBarKeyUp(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
+    procedure VerticalTimeTrackBarChange(Sender: TObject);
+    procedure VerticalTimeTrackBarMouseDown(Sender: TObject;
+      Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure VerticalTimeTrackBarMouseUp(Sender: TObject;
+      Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure VerticalTimeTrackBarKeyUp(Sender: TObject; var Key: Word;
       Shift: TShiftState);
     procedure TreeListDblClick(Sender: TObject);
     procedure TreeListDrawItem(Control: TWinControl; Index: Integer;
@@ -90,6 +102,12 @@ type
     FNavRepeated: Boolean;
     FDraggingTimeline: Boolean;
     FPendingTimelinePosition: Integer;
+    FDraggingTime: Boolean;
+    FPendingTimePosition: Integer;
+    FOldestUnixTime: Int64;
+    FNewestUnixTime: Int64;
+    FTimePreviewTimer: TTimer;
+    FSelectedUnixTime: Int64;
     procedure LoadSnapshot;
     procedure LoadCurrentDirectory;
     procedure RefreshCurrentDirectory;
@@ -107,6 +125,12 @@ type
     procedure UpdateTimelineLabels;
     procedure UpdateForkInfo;
     function ResolveSliderCommit(SliderPos: Integer): string;
+    function UnixTimeToSlider(UnixTime: Int64): Integer;
+    function SliderToUnixTime(SliderPos: Integer): Int64;
+    procedure SelectTimePosition(SliderPos: Integer);
+    procedure UpdateVerticalTimeSlider;
+    procedure UpdateTimeRailLabels;
+    procedure UpdateTimeCurrentLabel;
     procedure SelectCommitHash(const CommitHash: string);
     function PredecessorCommit(const CommitHash: string): string;
     procedure BuildEntryStates(const FromCommit, ToCommit: string);
@@ -155,16 +179,28 @@ begin
   FNavRepeated := False;
   FDraggingTimeline := False;
   FPendingTimelinePosition := 0;
+  FDraggingTime := False;
+  FPendingTimePosition := 0;
+  FOldestUnixTime := 0;
+  FNewestUnixTime := 0;
+  FSelectedUnixTime := 0;
   FNavTimer := TTimer.Create(Self);
   FNavTimer.Enabled := False;
   FNavTimer.Interval := 250;
   FNavTimer.OnTimer := @NavTimerTimer;
+  FTimePreviewTimer := TTimer.Create(Self);
+  FTimePreviewTimer.Enabled := False;
+  FTimePreviewTimer.Interval := 350;
+  FTimePreviewTimer.OnTimer := @TimePreviewTimerTimer;
   BranchEdit.Items.Clear;
   WindowStartLabel.Caption := '';
   CurrentHashLabel.Caption := '—';
   WindowEndLabel.Caption := '';
   ForkLabel.Caption := '';
   ScaleLabel.Caption := '';
+  TimeNowLabel.Caption := 'Now';
+  TimeStartLabel.Caption := '';
+  TimeCurrentLabel.Caption := '';
   TimeEdit.Text := CurrentLocalTimeForGit;
   SnapshotLabel.Caption := 'Snapshot: not loaded';
   CommitInfoLabel.Caption := 'Commit: not loaded';
@@ -175,6 +211,7 @@ begin
   PrevButton.Enabled := False;
   NextButton.Enabled := False;
   TimeTrackBar.Enabled := False;
+  VerticalTimeTrackBar.Enabled := False;
   if ParamCount >= 1 then
   begin
     RepoEdit.Text := ExpandFileName(ParamStr(1));
@@ -385,12 +422,30 @@ begin
 
   FHasNewer := EndIndex < FBranchIndex.Count - 1;
 
+  FOldestUnixTime := CommitUnixTime(
+    RepoEdit.Text,
+    FBranchIndex[0]
+  );
+  FNewestUnixTime := CommitUnixTime(
+    RepoEdit.Text,
+    FBranchIndex[FBranchIndex.Count - 1]
+  );
+
+  UpdateTimeRailLabels;
+
   FLoadingTimeline := True;
   try
     TimeTrackBar.Min := 0;
     TimeTrackBar.Max := FBranchCommitCount - 1;
     TimeTrackBar.Position := FCurrentBranchPosition;
     TimeTrackBar.Enabled := FBranchCommitCount > 0;
+
+    VerticalTimeTrackBar.Min := 0;
+    VerticalTimeTrackBar.Max := 1000;
+    FSelectedUnixTime := CommitUnixTime(RepoEdit.Text, CenterCommit);
+    VerticalTimeTrackBar.Position :=
+      UnixTimeToSlider(FSelectedUnixTime);
+    VerticalTimeTrackBar.Enabled := FNewestUnixTime > FOldestUnixTime;
   finally
     FLoadingTimeline := False;
   end;
@@ -412,6 +467,150 @@ begin
     else
       FCurrentPath := Copy(FCurrentPath, 1, P - 1);
   end;
+end;
+
+function TMainForm.UnixTimeToSlider(UnixTime: Int64): Integer;
+var
+  Span, Offset: Int64;
+begin
+  Result := 0;
+  Span := FNewestUnixTime - FOldestUnixTime;
+
+  if Span <= 0 then
+    Exit;
+
+  Offset := UnixTime - FOldestUnixTime;
+  if Offset < 0 then
+    Offset := 0;
+  if Offset > Span then
+    Offset := Span;
+
+  { Vertical trackbar: top is 0, bottom is 1000. }
+  Result := 1000 - Round((Offset * 1000.0) / Span);
+end;
+
+function TMainForm.SliderToUnixTime(SliderPos: Integer): Int64;
+var
+  Span: Int64;
+begin
+  if SliderPos < 0 then
+    SliderPos := 0;
+  if SliderPos > 1000 then
+    SliderPos := 1000;
+
+  Span := FNewestUnixTime - FOldestUnixTime;
+  if Span <= 0 then
+  begin
+    Result := FOldestUnixTime;
+    Exit;
+  end;
+
+  { Vertical trackbar: top is newest, bottom is oldest. }
+  Result := FOldestUnixTime +
+    Round((Span * (1000 - SliderPos)) / 1000.0);
+end;
+
+procedure TMainForm.SelectTimePosition(SliderPos: Integer);
+var
+  CommitHash: string;
+begin
+  if not VerticalTimeTrackBar.Enabled then
+    Exit;
+
+  FSelectedUnixTime := SliderToUnixTime(SliderPos);
+
+  CommitHash := ResolveCommitAtUnixTime(
+    RepoEdit.Text,
+    BranchEdit.Text,
+    FSelectedUnixTime
+  );
+
+  if CommitHash <> '' then
+    SelectCommitHash(CommitHash);
+
+  UpdateVerticalTimeSlider;
+end;
+
+procedure TMainForm.UpdateVerticalTimeSlider;
+begin
+  if FSelectedUnixTime = 0 then
+    Exit;
+
+  FLoadingTimeline := True;
+  try
+    VerticalTimeTrackBar.Position :=
+      UnixTimeToSlider(FSelectedUnixTime);
+  finally
+    FLoadingTimeline := False;
+  end;
+
+  UpdateTimeCurrentLabel;
+end;
+
+procedure TMainForm.UpdateTimeRailLabels;
+begin
+  if FNewestUnixTime > 0 then
+    TimeNowLabel.Caption :=
+      FormatDateTime('yyyy-mm-dd hh:nn',
+        UnixToDateTime(FNewestUnixTime, False))
+  else
+    TimeNowLabel.Caption := '';
+
+  if FOldestUnixTime > 0 then
+    TimeStartLabel.Caption :=
+      FormatDateTime('yyyy-mm-dd hh:nn',
+        UnixToDateTime(FOldestUnixTime, False))
+  else
+    TimeStartLabel.Caption := '';
+
+  UpdateTimeCurrentLabel;
+end;
+
+procedure TMainForm.UpdateTimeCurrentLabel;
+var
+  P, RailTop, RailBottom, Y: Integer;
+begin
+  if (FSelectedUnixTime <= 0) or
+     (FNewestUnixTime <= FOldestUnixTime) then
+  begin
+    TimeCurrentLabel.Caption := '';
+    Exit;
+  end;
+
+  P := UnixTimeToSlider(FSelectedUnixTime);
+
+  { Endpoint labels already identify these positions. }
+  if (P = 0) or (P = 1000) then
+  begin
+    TimeCurrentLabel.Caption := '';
+    Exit;
+  end;
+
+  TimeCurrentLabel.Caption :=
+    FormatDateTime('yyyy-mm-dd hh:nn',
+      UnixToDateTime(FSelectedUnixTime, False));
+
+  RailTop := VerticalTimeTrackBar.Top;
+  RailBottom := VerticalTimeTrackBar.Top +
+    VerticalTimeTrackBar.Height;
+
+  Y := RailTop +
+    Round((P / 1000.0) * VerticalTimeTrackBar.Height);
+
+  if P >= 500 then
+    Y := Y - TimeCurrentLabel.Height - 2
+  else
+    Y := Y + 18;
+
+  if Y < RailTop + 18 then
+    Y := RailTop + 18;
+  if Y + TimeCurrentLabel.Height > RailBottom - 18 then
+    Y := RailBottom - 18 - TimeCurrentLabel.Height;
+
+  TimeCurrentLabel.Top := Y;
+  TimeCurrentLabel.Left :=
+    VerticalTimeTrackBar.Left +
+    VerticalTimeTrackBar.Width + 8;
 end;
 
 function TMainForm.ResolveSliderCommit(SliderPos: Integer): string;
@@ -700,6 +899,66 @@ begin
   end;
 
   StepNavigation(1);
+end;
+
+procedure TMainForm.TimePreviewTimerTimer(Sender: TObject);
+begin
+  FTimePreviewTimer.Enabled := False;
+  UpdateTimeCurrentLabel;
+end;
+
+procedure TMainForm.VerticalTimeTrackBarChange(Sender: TObject);
+begin
+  if FLoadingTimeline then
+    Exit;
+
+  FPendingTimePosition := VerticalTimeTrackBar.Position;
+  FSelectedUnixTime := SliderToUnixTime(FPendingTimePosition);
+
+  FTimePreviewTimer.Enabled := False;
+  FTimePreviewTimer.Enabled := True;
+end;
+
+procedure TMainForm.VerticalTimeTrackBarMouseDown(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  if Button <> mbLeft then
+    Exit;
+
+  FDraggingTime := True;
+  FPendingTimePosition := VerticalTimeTrackBar.Position;
+end;
+
+procedure TMainForm.VerticalTimeTrackBarMouseUp(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  if Button <> mbLeft then
+    Exit;
+
+  if not FDraggingTime then
+    Exit;
+
+  FDraggingTime := False;
+  FPendingTimePosition := VerticalTimeTrackBar.Position;
+  FSelectedUnixTime := SliderToUnixTime(FPendingTimePosition);
+
+  FTimePreviewTimer.Enabled := False;
+  UpdateTimeCurrentLabel;
+  SelectTimePosition(FPendingTimePosition);
+end;
+
+procedure TMainForm.VerticalTimeTrackBarKeyUp(Sender: TObject;
+  var Key: Word; Shift: TShiftState);
+begin
+  if FLoadingTimeline or FDraggingTime then
+    Exit;
+
+  FPendingTimePosition := VerticalTimeTrackBar.Position;
+  FSelectedUnixTime := SliderToUnixTime(FPendingTimePosition);
+
+  FTimePreviewTimer.Enabled := False;
+  UpdateTimeCurrentLabel;
+  SelectTimePosition(FPendingTimePosition);
 end;
 
 procedure TMainForm.TimeTrackBarMouseDown(Sender: TObject;

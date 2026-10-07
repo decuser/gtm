@@ -52,7 +52,7 @@
       <Filename Value="../bin/gtm-gui"/>
     </Target>
     <SearchPaths>
-      <IncludeFiles Value="$(ProjOutDir)"/>
+      <IncludeFiles Value="../bin;$(ProjOutDir)"/>
       <OtherUnitFiles Value="../core"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
