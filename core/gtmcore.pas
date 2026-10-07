@@ -11,9 +11,23 @@ procedure Die(const Msg: string);
 function CurrentLocalTimeForGit: string;
 function NormalizeRepoPath(const S: string): string;
 function ResolveCommit(const Repo, BranchName, RequestedAt: string): string;
+function ResolveFirstParentCommit(const Repo, BranchName,
+  RequestedAt: string): string;
 function CommitTime(const Repo, CommitHash: string): string;
 function CommitSubject(const Repo, CommitHash: string): string;
 procedure BuildTimeline(const Repo, BranchName: string; Commits: TStrings);
+procedure BuildTimelineWindow(const Repo, BranchName, CenterCommit: string;
+  WindowSize: Integer; Commits: TStrings; out OlderCommit: string;
+  out HasNewer: Boolean);
+procedure ListBranches(const Repo: string; Branches: TStrings);
+function FindMergeBase(const Repo, BranchA, BranchB: string): string;
+function CountBranchCommits(const Repo, BranchName: string): Integer;
+function CountReachableCommits(const Repo, BranchName: string): Integer;
+function CountCommitsAfter(const Repo, BaseCommit, BranchName: string): Integer;
+function BranchTip(const Repo, BranchName: string): string;
+function BranchRoot(const Repo, BranchName: string): string;
+function BranchCommitAtPosition(const Repo, BranchName: string;
+  Position, TotalCount: Integer): string;
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
 function DirectoryExistsAtCommit(const Repo, CommitHash, PathArg: string): Boolean;
@@ -34,17 +48,20 @@ implementation
 
 function RunGit(const Repo: string; const Args: array of string;
   out OutputText, ErrorText: string; out ExitCode: Integer): Boolean;
+const
+  BufferSize = 8192;
 var
   P: TProcess;
   SSOut, SSErr: TStringStream;
-  I: Integer;
+  Buffer: array[0..BufferSize - 1] of Byte;
+  I, N: Integer;
 begin
   P := TProcess.Create(nil);
   SSOut := TStringStream.Create('');
   SSErr := TStringStream.Create('');
   try
     P.Executable := 'git';
-    P.Options := [poUsePipes, poWaitOnExit];
+    P.Options := [poUsePipes];
     P.Parameters.Add('-C');
     P.Parameters.Add(Repo);
 
@@ -63,8 +80,27 @@ begin
       end;
     end;
 
-    SSOut.CopyFrom(P.Output, 0);
-    SSErr.CopyFrom(P.Stderr, 0);
+    repeat
+      while P.Output.NumBytesAvailable > 0 do
+      begin
+        N := P.Output.Read(Buffer, SizeOf(Buffer));
+        if N > 0 then
+          SSOut.WriteBuffer(Buffer, N);
+      end;
+
+      while P.Stderr.NumBytesAvailable > 0 do
+      begin
+        N := P.Stderr.Read(Buffer, SizeOf(Buffer));
+        if N > 0 then
+          SSErr.WriteBuffer(Buffer, N);
+      end;
+
+      if P.Running then
+        Sleep(1);
+    until (not P.Running) and
+          (P.Output.NumBytesAvailable = 0) and
+          (P.Stderr.NumBytesAvailable = 0);
+
     OutputText := SSOut.DataString;
     ErrorText := SSErr.DataString;
     ExitCode := P.ExitStatus;
@@ -158,6 +194,28 @@ begin
     Die('no commit found at or before requested time');
 end;
 
+function ResolveFirstParentCommit(const Repo, BranchName,
+  RequestedAt: string): string;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := '';
+
+  if not RunGit(Repo,
+    ['rev-list', '--first-parent', '-1',
+     '--before=' + RequestedAt, BranchName],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := CleanLine(OutText);
+
+  if Result = '' then
+    Result := BranchRoot(Repo, BranchName);
+end;
+
+
 function CommitTime(const Repo, CommitHash: string): string;
 var
   OutText, ErrText: string;
@@ -208,6 +266,289 @@ begin
 
   Commits.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
 end;
+
+procedure BuildTimelineWindow(const Repo, BranchName, CenterCommit: string;
+  WindowSize: Integer; Commits: TStrings; out OlderCommit: string;
+  out HasNewer: Boolean);
+var
+  OutText, ErrText: string;
+  Code, DescCount, AfterCount, BeforeCount, SkipCount, I: Integer;
+  BeforeLines, AfterLines: TStringList;
+begin
+  if Commits = nil then
+    Exit;
+
+  Commits.Clear;
+  OlderCommit := '';
+  HasNewer := False;
+
+  if WindowSize < 2 then
+    WindowSize := 2;
+
+  if (Trim(CenterCommit) = '') or (Trim(BranchName) = '') then
+    Exit;
+
+  { Count descendants so we can take the commits nearest the center,
+    rather than the newest commits on the branch.  This returns only a
+    scalar even for a very large repository. }
+  if not RunGit(Repo,
+    ['rev-list', '--first-parent', '--count', CenterCommit + '..' + BranchName],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  DescCount := StrToIntDef(CleanLine(OutText), 0);
+
+  AfterCount := WindowSize div 2;
+  if DescCount < AfterCount then
+    AfterCount := DescCount;
+
+  BeforeCount := WindowSize - AfterCount;
+
+  { Fetch the center plus bounded ancestors, with one extra commit kept
+    as the predecessor just outside the visible window. }
+  BeforeLines := TStringList.Create;
+  AfterLines := TStringList.Create;
+  try
+    if not RunGit(Repo,
+      ['rev-list', '--first-parent', '--max-count=' + IntToStr(BeforeCount + 1), CenterCommit],
+      OutText, ErrText, Code) then
+      Die('unable to execute git: ' + ErrText);
+
+    if Code <> 0 then
+      Die(Trim(ErrText));
+
+    BeforeLines.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+
+    while (BeforeLines.Count > 0) and
+          (Trim(BeforeLines[BeforeLines.Count - 1]) = '') do
+      BeforeLines.Delete(BeforeLines.Count - 1);
+
+    if BeforeLines.Count > BeforeCount then
+    begin
+      OlderCommit := Trim(BeforeLines[BeforeLines.Count - 1]);
+      BeforeLines.Delete(BeforeLines.Count - 1);
+    end;
+
+    for I := BeforeLines.Count - 1 downto 0 do
+      if Trim(BeforeLines[I]) <> '' then
+        Commits.Add(Trim(BeforeLines[I]));
+
+    if AfterCount > 0 then
+    begin
+      SkipCount := DescCount - AfterCount;
+
+      if not RunGit(Repo,
+        ['rev-list',
+         '--skip=' + IntToStr(SkipCount),
+         '--max-count=' + IntToStr(AfterCount),
+         '--reverse',
+         CenterCommit + '..' + BranchName],
+        OutText, ErrText, Code) then
+        Die('unable to execute git: ' + ErrText);
+
+      if Code <> 0 then
+        Die(Trim(ErrText));
+
+      AfterLines.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+
+      for I := 0 to AfterLines.Count - 1 do
+        if Trim(AfterLines[I]) <> '' then
+          Commits.Add(Trim(AfterLines[I]));
+    end;
+
+    HasNewer := DescCount > AfterCount;
+  finally
+    AfterLines.Free;
+    BeforeLines.Free;
+  end;
+end;
+
+
+procedure ListBranches(const Repo: string; Branches: TStrings);
+var
+  OutText, ErrText: string;
+  Code, I: Integer;
+  Lines: TStringList;
+  S: string;
+begin
+  if Branches = nil then
+    Exit;
+
+  Branches.Clear;
+
+  if not RunGit(Repo,
+    ['for-each-ref', '--format=%(refname:short)',
+     'refs/heads', 'refs/remotes'],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Lines := TStringList.Create;
+  try
+    Lines.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+
+    for I := 0 to Lines.Count - 1 do
+    begin
+      S := Trim(Lines[I]);
+
+      if S = '' then
+        Continue;
+
+      if (Length(S) >= 5) and
+         SameText(Copy(S, Length(S) - 4, 5), '/HEAD') then
+        Continue;
+
+      if Branches.IndexOf(S) < 0 then
+        Branches.Add(S);
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+function FindMergeBase(const Repo, BranchA, BranchB: string): string;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := '';
+
+  if (Trim(BranchA) = '') or (Trim(BranchB) = '') then
+    Exit;
+
+  if not RunGit(Repo, ['merge-base', BranchA, BranchB],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := CleanLine(OutText);
+end;
+
+function CountBranchCommits(const Repo, BranchName: string): Integer;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := 0;
+
+  if not RunGit(Repo, ['rev-list', '--first-parent', '--count', BranchName],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := StrToIntDef(CleanLine(OutText), 0);
+end;
+
+function CountReachableCommits(const Repo, BranchName: string): Integer;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := 0;
+
+  if not RunGit(Repo, ['rev-list', '--count', BranchName],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := StrToIntDef(CleanLine(OutText), 0);
+end;
+
+
+function CountCommitsAfter(const Repo, BaseCommit, BranchName: string): Integer;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := 0;
+
+  if (Trim(BaseCommit) = '') or (Trim(BranchName) = '') then
+    Exit;
+
+  if not RunGit(Repo,
+    ['rev-list', '--first-parent', '--count', BaseCommit + '..' + BranchName],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := StrToIntDef(CleanLine(OutText), 0);
+end;
+
+function BranchTip(const Repo, BranchName: string): string;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := '';
+
+  if not RunGit(Repo, ['rev-parse', BranchName],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := CleanLine(OutText);
+end;
+
+function BranchRoot(const Repo, BranchName: string): string;
+var
+  OutText, ErrText: string;
+  Code, NL: Integer;
+begin
+  Result := '';
+
+  if not RunGit(Repo, ['rev-list', '--first-parent', '--max-parents=0', BranchName],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code <> 0 then
+    Exit;
+
+  OutText := Trim(OutText);
+  NL := Pos(#10, OutText);
+  if NL > 0 then
+    Result := Trim(Copy(OutText, 1, NL - 1))
+  else
+    Result := OutText;
+end;
+
+function BranchCommitAtPosition(const Repo, BranchName: string;
+  Position, TotalCount: Integer): string;
+var
+  OutText, ErrText: string;
+  Code, SkipCount: Integer;
+begin
+  Result := '';
+
+  if TotalCount <= 0 then
+    Exit;
+
+  if Position < 0 then
+    Position := 0;
+  if Position >= TotalCount then
+    Position := TotalCount - 1;
+
+  { git rev-list is newest-first.  The slider is oldest-left, newest-right. }
+  SkipCount := TotalCount - 1 - Position;
+
+  if not RunGit(Repo,
+    ['rev-list', '--first-parent',
+     '--skip=' + IntToStr(SkipCount),
+     '--max-count=1',
+     BranchName],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := CleanLine(OutText);
+end;
+
+
+
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
 var

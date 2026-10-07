@@ -42,11 +42,13 @@ object MainForm: TMainForm
     Width = 43
     Caption = 'Branch'
   end
-  object BranchEdit: TEdit
+  object BranchEdit: TComboBox
     Left = 96
     Height = 27
     Top = 55
     Width = 180
+    Style = csDropDownList
+    OnChange = BranchEditChange
     TabOrder = 2
   end
   object TimeLabel: TLabel
@@ -60,17 +62,8 @@ object MainForm: TMainForm
     Left = 344
     Height = 27
     Top = 55
-    Width = 220
+    Width = 360
     TabOrder = 3
-  end
-  object LoadButton: TButton
-    Left = 584
-    Height = 30
-    Top = 54
-    Width = 120
-    Caption = 'Load Snapshot'
-    OnClick = LoadButtonClick
-    TabOrder = 4
   end
   object SnapshotLabel: TLabel
     Left = 16
@@ -79,60 +72,122 @@ object MainForm: TMainForm
     Width = 127
     Caption = 'Snapshot: not loaded'
   end
-  object PrevButton: TButton
+  object FirstButton: TButton
     Left = 16
     Height = 30
-    Top = 120
-    Width = 48
+    Top = 144
+    Width = 36
+    Caption = '|<'
+    OnClick = FirstButtonClick
+    TabOrder = 5
+  end
+  object PrevButton: TButton
+    Left = 56
+    Height = 30
+    Top = 144
+    Width = 36
     Caption = '<'
     OnClick = PrevButtonClick
+    OnMouseDown = NavButtonMouseDown
+    OnMouseUp = NavButtonMouseUp
     TabOrder = 5
   end
   object TimeTrackBar: TTrackBar
-    Left = 72
+    Left = 100
     Height = 32
-    Top = 120
-    Width = 752
+    Top = 144
+    Width = 696
     Anchors = [akTop, akLeft, akRight]
     Max = 100
+    TickStyle = tsNone
     OnChange = TimeTrackBarChange
+    OnMouseDown = TimeTrackBarMouseDown
+    OnMouseUp = TimeTrackBarMouseUp
+    OnKeyUp = TimeTrackBarKeyUp
     TabOrder = 6
   end
   object NextButton: TButton
-    Left = 832
+    Left = 804
     Height = 30
-    Top = 120
-    Width = 48
+    Top = 144
+    Width = 36
     Anchors = [akTop, akRight]
     Caption = '>'
     OnClick = NextButtonClick
+    OnMouseDown = NavButtonMouseDown
+    OnMouseUp = NavButtonMouseUp
     TabOrder = 7
+  end
+  object LastButton: TButton
+    Left = 844
+    Height = 30
+    Top = 144
+    Width = 36
+    Anchors = [akTop, akRight]
+    Caption = '>|'
+    OnClick = LastButtonClick
+    TabOrder = 8
+  end
+  object ForkLabel: TLabel
+    Left = 72
+    Height = 17
+    Top = 176
+    Width = 0
+    Caption = ''
+  end
+  object WindowStartLabel: TLabel
+    Left = 100
+    Height = 17
+    Top = 200
+    Width = 64
+    Caption = ''
+  end
+  object CurrentHashLabel: TLabel
+    Left = 440
+    Height = 17
+    Top = 120
+    Width = 64
+    Caption = '—'
+  end
+  object WindowEndLabel: TLabel
+    Left = 732
+    Height = 17
+    Top = 200
+    Width = 64
+    Caption = ''
+  end
+  object ScaleLabel: TLabel
+    Left = 16
+    Height = 17
+    Top = 224
+    Width = 300
+    Caption = ''
   end
   object CommitInfoLabel: TLabel
     Left = 16
     Height = 17
-    Top = 160
+    Top = 248
     Width = 110
     Caption = 'Commit: not loaded'
   end
   object CompareLabel: TLabel
     Left = 16
     Height = 17
-    Top = 184
+    Top = 272
     Width = 80
     Caption = 'Compare: —'
   end
   object PathLabel: TLabel
     Left = 16
     Height = 17
-    Top = 208
+    Top = 296
     Width = 40
     Caption = 'Path: /'
   end
   object TreeList: TListBox
     Left = 16
-    Height = 386
-    Top = 232
+    Height = 298
+    Top = 320
     Width = 864
     Anchors = [akTop, akLeft, akRight, akBottom]
     ItemHeight = 20
