@@ -138,6 +138,7 @@ object MainForm: TMainForm
     ItemHeight = 20
     OnDblClick = TreeListDblClick
     OnDrawItem = TreeListDrawItem
+    PopupMenu = FilePopup
     Style = lbOwnerDrawFixed
     TabOrder = 8
   end
@@ -145,5 +146,27 @@ object MainForm: TMainForm
     Title = 'Select Git Repository'
     left = 816
     top = 80
+  end
+  object FilePopup: TPopupMenu
+    OnPopup = FilePopupPopup
+    left = 704
+    top = 96
+    object OpenMenuItem: TMenuItem
+      Caption = 'Open'
+      OnClick = OpenMenuItemClick
+    end
+    object SaveAsMenuItem: TMenuItem
+      Caption = 'Save As...'
+      OnClick = SaveAsMenuItemClick
+    end
+    object VisualDiffMenuItem: TMenuItem
+      Caption = 'Visual Diff'
+      OnClick = VisualDiffMenuItemClick
+    end
+  end
+  object SaveDialog: TSaveDialog
+    Options = [ofOverwritePrompt, ofEnableSizing]
+    left = 744
+    top = 96
   end
 end

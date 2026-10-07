@@ -6,7 +6,7 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, StdCtrls, Dialogs, ComCtrls, LCLIntf,
-  Graphics, gtmcore;
+  Graphics, Menus, Process, gtmcore;
 
 type
   TMainForm = class(TForm)
@@ -14,6 +14,11 @@ type
     BranchLabel: TLabel;
     CommitInfoLabel: TLabel;
     CompareLabel: TLabel;
+    FilePopup: TPopupMenu;
+    OpenMenuItem: TMenuItem;
+    SaveAsMenuItem: TMenuItem;
+    VisualDiffMenuItem: TMenuItem;
+    SaveDialog: TSaveDialog;
     BrowseButton: TButton;
     LoadButton: TButton;
     NextButton: TButton;
@@ -37,6 +42,10 @@ type
     procedure TreeListDblClick(Sender: TObject);
     procedure TreeListDrawItem(Control: TWinControl; Index: Integer;
       ARect: TRect; State: TOwnerDrawState);
+    procedure FilePopupPopup(Sender: TObject);
+    procedure OpenMenuItemClick(Sender: TObject);
+    procedure SaveAsMenuItemClick(Sender: TObject);
+    procedure VisualDiffMenuItemClick(Sender: TObject);
   private
     FCommitHash: string;
     FCurrentPath: string;
@@ -47,6 +56,7 @@ type
     FLoadingTimeline: Boolean;
     procedure LoadSnapshot;
     procedure LoadCurrentDirectory;
+    procedure RefreshCurrentDirectory;
     procedure EnterDirectory(const EntryName: string);
     procedure GoParent;
     procedure OpenHistoricalFile(const EntryName: string);
@@ -63,6 +73,11 @@ type
     function DisplayStatus(const S: string): string;
     function IsDeletedDisplay(const S: string): Boolean;
     function IsDirectoryEntry(const S: string): Boolean;
+    function SelectedDisplayEntry: string;
+    function SelectedHistoricalPath: string;
+    function TempPathForCommit(const CommitHash, RepoPath: string): string;
+    procedure MaterializeTempFile(const CommitHash, RepoPath: string;
+      out TempFile: string);
     function JoinRepoPath(const BasePath, EntryName: string): string;
   public
   end;
@@ -372,6 +387,13 @@ begin
   end;
 end;
 
+procedure TMainForm.RefreshCurrentDirectory;
+begin
+  BuildEntryStates(PredecessorCommit(FCommitHash), FCommitHash);
+  LoadCurrentDirectory;
+  TreeList.Invalidate;
+end;
+
 procedure TMainForm.LoadCurrentDirectory;
 var
   Entries, DisplayEntries: TStringList;
@@ -493,6 +515,61 @@ begin
   Result := DisplayStatus(S) = 'deleted';
 end;
 
+function TMainForm.SelectedDisplayEntry: string;
+begin
+  Result := '';
+  if TreeList.ItemIndex < 0 then
+    Exit;
+  Result := TreeList.Items[TreeList.ItemIndex];
+end;
+
+function TMainForm.SelectedHistoricalPath: string;
+var
+  EntryText: string;
+begin
+  Result := '';
+  EntryText := SelectedDisplayEntry;
+  if (EntryText = '') or (EntryText = '../') or IsDeletedDisplay(EntryText) then
+    Exit;
+
+  EntryText := StripStatusDecoration(EntryText);
+  while (Length(EntryText) > 0) and
+        (EntryText[Length(EntryText)] = '/') do
+    Delete(EntryText, Length(EntryText), 1);
+
+  if FCurrentPath = '' then
+    Result := EntryText
+  else
+    Result := FCurrentPath + '/' + EntryText;
+end;
+
+function TMainForm.TempPathForCommit(const CommitHash,
+  RepoPath: string): string;
+var
+  BaseRoot, ShortHash: string;
+begin
+  ShortHash := Copy(CommitHash, 1, 8);
+  BaseRoot := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'gtm' +
+    DirectorySeparator + ShortHash;
+
+  Result := IncludeTrailingPathDelimiter(BaseRoot) +
+    StringReplace(RepoPath, '/', DirectorySeparator, [rfReplaceAll]);
+end;
+
+procedure TMainForm.MaterializeTempFile(const CommitHash, RepoPath: string;
+  out TempFile: string);
+var
+  ParentDir: string;
+begin
+  TempFile := TempPathForCommit(CommitHash, RepoPath);
+  ParentDir := ExtractFileDir(TempFile);
+
+  if not ForceDirectories(ParentDir) then
+    Die('unable to create temporary directory: ' + ParentDir);
+
+  ExtractFile(RepoEdit.Text, CommitHash, RepoPath, TempFile);
+end;
+
 function TMainForm.IsDirectoryEntry(const S: string): Boolean;
 var
   EntryText: string;
@@ -523,8 +600,7 @@ begin
     Exit;
 
   FCurrentPath := JoinRepoPath(FCurrentPath, DirName);
-  BuildEntryStates(PredecessorCommit(FCommitHash), FCommitHash);
-  LoadCurrentDirectory;
+  RefreshCurrentDirectory;
 end;
 
 procedure TMainForm.GoParent;
@@ -540,41 +616,22 @@ begin
   else
     FCurrentPath := Copy(FCurrentPath, 1, P - 1);
 
-  BuildEntryStates(PredecessorCommit(FCommitHash), FCommitHash);
-  LoadCurrentDirectory;
+  RefreshCurrentDirectory;
 end;
 
 procedure TMainForm.OpenHistoricalFile(const EntryName: string);
 var
-  RepoPath, TempRoot, TempDir, TempFile: string;
+  TempFile: string;
 begin
   if EntryName = '' then
     Exit;
 
-  RepoPath := JoinRepoPath(FCurrentPath, EntryName);
-
-  TempRoot := IncludeTrailingPathDelimiter(GetTempDir(False)) + 'git-time-machine';
-  if not ForceDirectories(TempRoot) then
-  begin
-    MessageDlg('Unable to create temporary directory.', mtError, [mbOK], 0);
-    Exit;
-  end;
-
-  TempDir := IncludeTrailingPathDelimiter(TempRoot) +
-    Copy(FCommitHash, 1, 12);
-  if not ForceDirectories(TempDir) then
-  begin
-    MessageDlg('Unable to create snapshot temporary directory.', mtError, [mbOK], 0);
-    Exit;
-  end;
-
-  TempFile := IncludeTrailingPathDelimiter(TempDir) + EntryName;
-
-  ExtractFile(RepoEdit.Text, FCommitHash, RepoPath, TempFile);
+  MaterializeTempFile(FCommitHash, EntryName, TempFile);
 
   if not OpenDocument(TempFile) then
     MessageDlg('Unable to open: ' + TempFile, mtError, [mbOK], 0);
 end;
+
 
 procedure TMainForm.TreeListDrawItem(Control: TWinControl; Index: Integer;
   ARect: TRect; State: TOwnerDrawState);
@@ -601,6 +658,80 @@ begin
   end;
 end;
 
+procedure TMainForm.FilePopupPopup(Sender: TObject);
+var
+  S, Status: string;
+  IsFile: Boolean;
+begin
+  S := SelectedDisplayEntry;
+  Status := DisplayStatus(S);
+
+  IsFile := (S <> '') and (S <> '../') and
+    (not IsDeletedDisplay(S)) and (not IsDirectoryEntry(S));
+
+  OpenMenuItem.Enabled := IsFile;
+  SaveAsMenuItem.Enabled := IsFile;
+  VisualDiffMenuItem.Enabled := IsFile and (Status = 'modified');
+end;
+
+procedure TMainForm.OpenMenuItemClick(Sender: TObject);
+var
+  PathName: string;
+begin
+  PathName := SelectedHistoricalPath;
+  if PathName = '' then
+    Exit;
+  OpenHistoricalFile(PathName);
+end;
+
+procedure TMainForm.SaveAsMenuItemClick(Sender: TObject);
+var
+  PathName: string;
+begin
+  PathName := SelectedHistoricalPath;
+  if PathName = '' then
+    Exit;
+
+  SaveDialog.FileName := ExtractFileName(PathName);
+  if SaveDialog.Execute then
+    ExtractFile(RepoEdit.Text, FCommitHash, PathName, SaveDialog.FileName);
+end;
+
+procedure TMainForm.VisualDiffMenuItemClick(Sender: TObject);
+var
+  PathName, PrevCommit, OldFile, NewFile: string;
+  P: TProcess;
+begin
+  PathName := SelectedHistoricalPath;
+  if PathName = '' then
+    Exit;
+
+  PrevCommit := PredecessorCommit(FCommitHash);
+  if PrevCommit = '' then
+    Exit;
+
+  MaterializeTempFile(PrevCommit, PathName, OldFile);
+  MaterializeTempFile(FCommitHash, PathName, NewFile);
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := 'meld';
+    P.Parameters.Add(OldFile);
+    P.Parameters.Add(NewFile);
+    P.Options := [];
+    try
+      P.Execute;
+    except
+      on E: Exception do
+        MessageDlg('Unable to launch visual diff: ' + E.Message,
+          mtError, [mbOK], 0);
+    end;
+  finally
+    P.Free;
+  end;
+end;
+
+
 procedure TMainForm.TreeListDblClick(Sender: TObject);
 var
   S: string;
@@ -622,7 +753,7 @@ begin
   if IsDirectoryEntry(S) then
     EnterDirectory(StripStatusDecoration(S))
   else
-    OpenHistoricalFile(StripStatusDecoration(S));
+    OpenHistoricalFile(SelectedHistoricalPath);
 end;
 
 end.
