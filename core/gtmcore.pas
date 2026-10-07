@@ -12,10 +12,14 @@ function CurrentLocalTimeForGit: string;
 function NormalizeRepoPath(const S: string): string;
 function ResolveCommit(const Repo, BranchName, RequestedAt: string): string;
 function CommitTime(const Repo, CommitHash: string): string;
+function CommitSubject(const Repo, CommitHash: string): string;
 procedure BuildTimeline(const Repo, BranchName: string; Commits: TStrings);
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
+function DirectoryExistsAtCommit(const Repo, CommitHash, PathArg: string): Boolean;
 procedure ListDirectoryEntries(const Repo, CommitHash, PathArg: string;
+  Entries: TStrings);
+procedure ListDirectoryObjects(const Repo, CommitHash, PathArg: string;
   Entries: TStrings);
 procedure ListDirectory(const Repo, CommitHash, PathArg: string);
 procedure CatFile(const Repo, CommitHash, PathArg: string);
@@ -169,6 +173,21 @@ begin
   Result := CleanLine(OutText);
 end;
 
+function CommitSubject(const Repo, CommitHash: string): string;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  if not RunGit(Repo, ['show', '-s', '--format=%s', CommitHash],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Result := CleanLine(OutText);
+end;
+
 procedure BuildTimeline(const Repo, BranchName: string; Commits: TStrings);
 var
   OutText, ErrText: string;
@@ -217,6 +236,87 @@ begin
   end
   else
     WriteLn('Committed:  ', Trim(OutText));
+end;
+
+function DirectoryExistsAtCommit(const Repo, CommitHash, PathArg: string): Boolean;
+var
+  OutText, ErrText, TreePath, ObjectSpec: string;
+  Code: Integer;
+begin
+  TreePath := NormalizeRepoPath(PathArg);
+
+  if TreePath = '' then
+    Exit(True);
+
+  ObjectSpec := CommitHash + ':' + TreePath;
+
+  if not RunGit(Repo, ['cat-file', '-t', ObjectSpec],
+    OutText, ErrText, Code) then
+    Exit(False);
+
+  Result := (Code = 0) and (CleanLine(OutText) = 'tree');
+end;
+
+procedure ListDirectoryObjects(const Repo, CommitHash, PathArg: string;
+  Entries: TStrings);
+var
+  OutText, ErrText, TreeSpec, S: string;
+  Code: Integer;
+  Lines: TStringList;
+  I, TabPos, P1, P2: Integer;
+  TypeText, HashText, NameText: string;
+begin
+  if Entries = nil then
+    Exit;
+
+  Entries.Clear;
+
+  TreeSpec := NormalizeRepoPath(PathArg);
+  if TreeSpec = '' then
+    TreeSpec := CommitHash
+  else
+    TreeSpec := CommitHash + ':' + TreeSpec;
+
+  if not RunGit(Repo, ['ls-tree', TreeSpec], OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Lines := TStringList.Create;
+  try
+    Lines.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+
+    for I := 0 to Lines.Count - 1 do
+    begin
+      S := Lines[I];
+      if Trim(S) = '' then
+        Continue;
+
+      TabPos := Pos(#9, S);
+      if TabPos = 0 then
+        Continue;
+
+      NameText := Copy(S, TabPos + 1, MaxInt);
+      Delete(S, TabPos, MaxInt);
+
+      P1 := Pos(' ', S);
+      if P1 = 0 then
+        Continue;
+      Delete(S, 1, P1);
+
+      P2 := Pos(' ', S);
+      if P2 = 0 then
+        Continue;
+
+      TypeText := Copy(S, 1, P2 - 1);
+      HashText := Copy(S, P2 + 1, MaxInt);
+
+      Entries.Add(TypeText + #9 + HashText + #9 + NameText);
+    end;
+  finally
+    Lines.Free;
+  end;
 end;
 
 procedure ListDirectoryEntries(const Repo, CommitHash, PathArg: string;

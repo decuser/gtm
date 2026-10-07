@@ -108,21 +108,37 @@ object MainForm: TMainForm
     OnClick = NextButtonClick
     TabOrder = 7
   end
+  object CommitInfoLabel: TLabel
+    Left = 16
+    Height = 17
+    Top = 160
+    Width = 110
+    Caption = 'Commit: not loaded'
+  end
+  object CompareLabel: TLabel
+    Left = 16
+    Height = 17
+    Top = 184
+    Width = 80
+    Caption = 'Compare: —'
+  end
   object PathLabel: TLabel
     Left = 16
     Height = 17
-    Top = 164
+    Top = 208
     Width = 40
     Caption = 'Path: /'
   end
   object TreeList: TListBox
     Left = 16
-    Height = 430
-    Top = 188
+    Height = 386
+    Top = 232
     Width = 864
     Anchors = [akTop, akLeft, akRight, akBottom]
-    ItemHeight = 0
+    ItemHeight = 20
     OnDblClick = TreeListDblClick
+    OnDrawItem = TreeListDrawItem
+    Style = lbOwnerDrawFixed
     TabOrder = 8
   end
   object SelectDirectoryDialog1: TSelectDirectoryDialog
