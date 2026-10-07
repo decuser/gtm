@@ -5,7 +5,8 @@ unit mainform;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, StdCtrls, Dialogs, LCLIntf, gtmcore;
+  Classes, SysUtils, Forms, Controls, StdCtrls, Dialogs, ComCtrls, LCLIntf,
+  gtmcore;
 
 type
   TMainForm = class(TForm)
@@ -13,26 +14,38 @@ type
     BranchLabel: TLabel;
     BrowseButton: TButton;
     LoadButton: TButton;
+    NextButton: TButton;
     PathLabel: TLabel;
+    PrevButton: TButton;
     RepoEdit: TEdit;
     RepoLabel: TLabel;
     SnapshotLabel: TLabel;
     TimeEdit: TEdit;
     TimeLabel: TLabel;
+    TimeTrackBar: TTrackBar;
     TreeList: TListBox;
     SelectDirectoryDialog1: TSelectDirectoryDialog;
     procedure BrowseButtonClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
     procedure LoadButtonClick(Sender: TObject);
+    procedure NextButtonClick(Sender: TObject);
+    procedure PrevButtonClick(Sender: TObject);
+    procedure TimeTrackBarChange(Sender: TObject);
     procedure TreeListDblClick(Sender: TObject);
   private
     FCommitHash: string;
     FCurrentPath: string;
+    FTimeline: TStringList;
+    FLoadingTimeline: Boolean;
     procedure LoadSnapshot;
     procedure LoadCurrentDirectory;
     procedure EnterDirectory(const EntryName: string);
     procedure GoParent;
     procedure OpenHistoricalFile(const EntryName: string);
+    procedure BuildBranchTimeline;
+    procedure SelectTimelineIndex(Index: Integer);
+    procedure UpdateTimelineControls;
     function IsDirectoryEntry(const S: string): Boolean;
     function JoinRepoPath(const BasePath, EntryName: string): string;
   public
@@ -47,12 +60,22 @@ implementation
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
+  FTimeline := TStringList.Create;
+  FLoadingTimeline := False;
   BranchEdit.Text := 'master';
   TimeEdit.Text := CurrentLocalTimeForGit;
   SnapshotLabel.Caption := 'Snapshot: not loaded';
   PathLabel.Caption := 'Path: /';
   FCommitHash := '';
   FCurrentPath := '';
+  PrevButton.Enabled := False;
+  NextButton.Enabled := False;
+  TimeTrackBar.Enabled := False;
+end;
+
+procedure TMainForm.FormDestroy(Sender: TObject);
+begin
+  FTimeline.Free;
 end;
 
 procedure TMainForm.BrowseButtonClick(Sender: TObject);
@@ -70,6 +93,8 @@ begin
 end;
 
 procedure TMainForm.LoadSnapshot;
+var
+  I: Integer;
 begin
   if Trim(RepoEdit.Text) = '' then
   begin
@@ -92,12 +117,94 @@ begin
     );
 
     FCurrentPath := '';
-    SnapshotLabel.Caption := 'Snapshot: ' + FCommitHash + '  @  ' +
-      CommitTime(RepoEdit.Text, FCommitHash);
-    LoadCurrentDirectory;
+    BuildBranchTimeline;
+
+    I := FTimeline.IndexOf(FCommitHash);
+    if I >= 0 then
+      SelectTimelineIndex(I)
+    else
+    begin
+      SnapshotLabel.Caption := 'Snapshot: ' + FCommitHash + '  @  ' +
+        CommitTime(RepoEdit.Text, FCommitHash);
+      LoadCurrentDirectory;
+    end;
   finally
     Screen.Cursor := crDefault;
   end;
+end;
+
+procedure TMainForm.BuildBranchTimeline;
+begin
+  BuildTimeline(RepoEdit.Text, BranchEdit.Text, FTimeline);
+
+  FLoadingTimeline := True;
+  try
+    if FTimeline.Count > 0 then
+    begin
+      TimeTrackBar.Min := 0;
+      TimeTrackBar.Max := FTimeline.Count - 1;
+      TimeTrackBar.Enabled := True;
+    end
+    else
+    begin
+      TimeTrackBar.Min := 0;
+      TimeTrackBar.Max := 0;
+      TimeTrackBar.Enabled := False;
+    end;
+  finally
+    FLoadingTimeline := False;
+  end;
+end;
+
+procedure TMainForm.SelectTimelineIndex(Index: Integer);
+begin
+  if FTimeline.Count = 0 then
+    Exit;
+
+  if Index < 0 then
+    Index := 0;
+  if Index >= FTimeline.Count then
+    Index := FTimeline.Count - 1;
+
+  FCommitHash := Trim(FTimeline[Index]);
+
+  FLoadingTimeline := True;
+  try
+    TimeTrackBar.Position := Index;
+  finally
+    FLoadingTimeline := False;
+  end;
+
+  TimeEdit.Text := CommitTime(RepoEdit.Text, FCommitHash);
+  SnapshotLabel.Caption := 'Snapshot: ' + FCommitHash + '  @  ' +
+    TimeEdit.Text;
+
+  LoadCurrentDirectory;
+  UpdateTimelineControls;
+end;
+
+procedure TMainForm.UpdateTimelineControls;
+begin
+  PrevButton.Enabled := TimeTrackBar.Enabled and (TimeTrackBar.Position > TimeTrackBar.Min);
+  NextButton.Enabled := TimeTrackBar.Enabled and (TimeTrackBar.Position < TimeTrackBar.Max);
+end;
+
+procedure TMainForm.PrevButtonClick(Sender: TObject);
+begin
+  SelectTimelineIndex(TimeTrackBar.Position - 1);
+end;
+
+procedure TMainForm.NextButtonClick(Sender: TObject);
+begin
+  SelectTimelineIndex(TimeTrackBar.Position + 1);
+end;
+
+procedure TMainForm.TimeTrackBarChange(Sender: TObject);
+begin
+  if FLoadingTimeline then
+    Exit;
+
+  SelectTimelineIndex(TimeTrackBar.Position);
 end;
 
 procedure TMainForm.LoadCurrentDirectory;

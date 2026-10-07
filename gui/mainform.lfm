@@ -1,14 +1,15 @@
 object MainForm: TMainForm
   Left = 300
-  Height = 600
+  Height = 640
   Top = 180
   Width = 900
   Caption = 'Git Time Machine'
-  ClientHeight = 600
+  ClientHeight = 640
   ClientWidth = 900
   OnCreate = FormCreate
+  OnDestroy = FormDestroy
   Position = poScreenCenter
-  LCLVersion = '3.0.0.0'
+  LCLVersion = '4.8.0.0'
   object RepoLabel: TLabel
     Left = 16
     Height = 17
@@ -78,22 +79,51 @@ object MainForm: TMainForm
     Width = 127
     Caption = 'Snapshot: not loaded'
   end
+  object PrevButton: TButton
+    Left = 16
+    Height = 30
+    Top = 120
+    Width = 48
+    Caption = '<'
+    OnClick = PrevButtonClick
+    TabOrder = 5
+  end
+  object TimeTrackBar: TTrackBar
+    Left = 72
+    Height = 32
+    Top = 120
+    Width = 752
+    Anchors = [akTop, akLeft, akRight]
+    Max = 100
+    OnChange = TimeTrackBarChange
+    TabOrder = 6
+  end
+  object NextButton: TButton
+    Left = 832
+    Height = 30
+    Top = 120
+    Width = 48
+    Anchors = [akTop, akRight]
+    Caption = '>'
+    OnClick = NextButtonClick
+    TabOrder = 7
+  end
   object PathLabel: TLabel
     Left = 16
     Height = 17
-    Top = 120
+    Top = 164
     Width = 40
     Caption = 'Path: /'
   end
   object TreeList: TListBox
     Left = 16
     Height = 430
-    Top = 144
+    Top = 188
     Width = 864
     Anchors = [akTop, akLeft, akRight, akBottom]
     ItemHeight = 0
     OnDblClick = TreeListDblClick
-    TabOrder = 5
+    TabOrder = 8
   end
   object SelectDirectoryDialog1: TSelectDirectoryDialog
     Title = 'Select Git Repository'

@@ -12,6 +12,7 @@ function CurrentLocalTimeForGit: string;
 function NormalizeRepoPath(const S: string): string;
 function ResolveCommit(const Repo, BranchName, RequestedAt: string): string;
 function CommitTime(const Repo, CommitHash: string): string;
+procedure BuildTimeline(const Repo, BranchName: string; Commits: TStrings);
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
 procedure ListDirectoryEntries(const Repo, CommitHash, PathArg: string;
@@ -166,6 +167,27 @@ begin
     Die(Trim(ErrText));
 
   Result := CleanLine(OutText);
+end;
+
+procedure BuildTimeline(const Repo, BranchName: string; Commits: TStrings);
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  if Commits = nil then
+    Exit;
+
+  Commits.Clear;
+
+  if not RunGit(Repo,
+    ['rev-list', '--reverse', BranchName],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Commits.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
 end;
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
