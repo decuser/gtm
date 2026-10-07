@@ -11,6 +11,7 @@ procedure Die(const Msg: string);
 function CurrentLocalTimeForGit: string;
 function NormalizeRepoPath(const S: string): string;
 function ResolveCommit(const Repo, BranchName, RequestedAt: string): string;
+function CommitTime(const Repo, CommitHash: string): string;
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
 procedure ListDirectoryEntries(const Repo, CommitHash, PathArg: string;
@@ -18,6 +19,7 @@ procedure ListDirectoryEntries(const Repo, CommitHash, PathArg: string;
 procedure ListDirectory(const Repo, CommitHash, PathArg: string);
 procedure CatFile(const Repo, CommitHash, PathArg: string);
 procedure GetFile(const Repo, CommitHash, PathArg, DestArg: string);
+procedure ExtractFile(const Repo, CommitHash, PathArg, DestFile: string);
 procedure ShowHistory(const Repo, BranchName, PathArg: string);
 procedure ShowDiff(const Repo, BranchName, FromAt, ToAt, PathArg: string);
 procedure ShowVisualDiff(const Repo, BranchName, FromAt, ToAt,
@@ -149,6 +151,21 @@ begin
   Result := CleanLine(OutText);
   if Result = '' then
     Die('no commit found at or before requested time');
+end;
+
+function CommitTime(const Repo, CommitHash: string): string;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  if not RunGit(Repo, ['show', '-s', '--format=%ci', CommitHash],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Result := CleanLine(OutText);
 end;
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
@@ -321,6 +338,36 @@ begin
   WriteLn('Recovered:  ', FilePath);
   WriteLn('From:       ', CommitHash);
   WriteLn('To:         ', ExpandFileName(DestPath));
+end;
+
+procedure ExtractFile(const Repo, CommitHash, PathArg, DestFile: string);
+var
+  OutText, ErrText, FilePath, ObjectSpec: string;
+  Code: Integer;
+  FS: TFileStream;
+begin
+  FilePath := NormalizeRepoPath(PathArg);
+  if FilePath = '' then
+    Die('extract requires a file path');
+
+  if DestFile = '' then
+    Die('extract requires a destination path');
+
+  ObjectSpec := CommitHash + ':' + FilePath;
+
+  if not RunGit(Repo, ['show', ObjectSpec], OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  FS := TFileStream.Create(DestFile, fmCreate);
+  try
+    if Length(OutText) > 0 then
+      FS.WriteBuffer(OutText[1], Length(OutText));
+  finally
+    FS.Free;
+  end;
 end;
 
 procedure ShowHistory(const Repo, BranchName, PathArg: string);
