@@ -42,6 +42,7 @@ procedure ListDirectory(const Repo, CommitHash, PathArg: string);
 procedure CatFile(const Repo, CommitHash, PathArg: string);
 procedure GetFile(const Repo, CommitHash, PathArg, DestArg: string);
 procedure ExtractFile(const Repo, CommitHash, PathArg, DestFile: string);
+procedure GetHistory(const Repo, BranchName, PathArg: string; Lines: TStrings);
 procedure ShowHistory(const Repo, BranchName, PathArg: string);
 procedure ShowDiff(const Repo, BranchName, FromAt, ToAt, PathArg: string);
 procedure ShowVisualDiff(const Repo, BranchName, FromAt, ToAt,
@@ -873,25 +874,51 @@ begin
   end;
 end;
 
-procedure ShowHistory(const Repo, BranchName, PathArg: string);
+procedure GetHistory(const Repo, BranchName, PathArg: string;
+  Lines: TStrings);
 var
   OutText, ErrText, FilePath: string;
   Code: Integer;
 begin
+  if Lines = nil then
+    Exit;
+
+  Lines.Clear;
   FilePath := NormalizeRepoPath(PathArg);
-  if FilePath = '' then Die('history requires a path');
+  if FilePath = '' then
+    Exit;
 
   if not RunGit(Repo,
-    ['log', '--date=format:%Y-%m-%d %H:%M:%S',
-     '--format=%ad  %h  %s', BranchName, '--', FilePath],
+    ['log', '--follow',
+     '--date=format:%Y-%m-%d %H:%M:%S',
+     '--format=%ad  %h  %s',
+     BranchName, '--', FilePath],
     OutText, ErrText, Code) then
     Die('unable to execute git: ' + ErrText);
 
-  if Code <> 0 then Die(Trim(ErrText));
-  if Trim(OutText) = '' then
-    Die('no history found for path: ' + FilePath);
+  if Code <> 0 then
+    Die(Trim(ErrText));
 
-  Write(OutText);
+  Lines.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+end;
+
+procedure ShowHistory(const Repo, BranchName, PathArg: string);
+var
+  Lines: TStringList;
+  I: Integer;
+begin
+  Lines := TStringList.Create;
+  try
+    GetHistory(Repo, BranchName, PathArg, Lines);
+
+    if Lines.Count = 0 then
+      Die('no history found for path: ' + NormalizeRepoPath(PathArg));
+
+    for I := 0 to Lines.Count - 1 do
+      WriteLn(Lines[I]);
+  finally
+    Lines.Free;
+  end;
 end;
 
 procedure ShowDiff(const Repo, BranchName, FromAt, ToAt, PathArg: string);

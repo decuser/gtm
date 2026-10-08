@@ -1,250 +1,230 @@
 object MainForm: TMainForm
   Left = 300
-  Height = 640
+  Height = 915
   Top = 180
-  Width = 900
+  Width = 1356
   Caption = 'Git Time Machine'
-  ClientHeight = 640
-  ClientWidth = 900
-  OnCreate = FormCreate
-  OnDestroy = FormDestroy
+  ClientHeight = 915
+  ClientWidth = 1356
+  DesignTimePPI = 144
   Position = poScreenCenter
   LCLVersion = '4.8.0.0'
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
   object RepoLabel: TLabel
-    Left = 16
-    Height = 17
-    Top = 20
-    Width = 65
+    Left = 24
+    Height = 26
+    Top = 30
+    Width = 90
     Caption = 'Repository'
   end
   object RepoEdit: TEdit
-    Left = 96
-    Height = 27
-    Top = 15
-    Width = 660
+    Left = 144
+    Height = 43
+    Top = 22
+    Width = 996
     Anchors = [akTop, akLeft, akRight]
     TabOrder = 0
   end
   object BrowseButton: TButton
-    Left = 768
-    Height = 30
-    Top = 14
-    Width = 112
+    Left = 1158
+    Height = 45
+    Top = 21
+    Width = 168
     Anchors = [akTop, akRight]
     Caption = 'Browse...'
-    OnClick = BrowseButtonClick
     TabOrder = 1
+    OnClick = BrowseButtonClick
   end
   object BranchLabel: TLabel
-    Left = 16
-    Height = 17
-    Top = 60
-    Width = 43
+    Left = 24
+    Height = 26
+    Top = 90
+    Width = 60
     Caption = 'Branch'
   end
   object BranchEdit: TComboBox
-    Left = 96
-    Height = 27
-    Top = 55
-    Width = 180
+    Left = 144
+    Height = 42
+    Top = 82
+    Width = 270
+    ItemHeight = 0
     Style = csDropDownList
-    OnChange = BranchEditChange
     TabOrder = 2
+    OnChange = BranchEditChange
   end
   object TimeLabel: TLabel
-    Left = 304
-    Height = 17
-    Top = 60
-    Width = 29
+    Left = 456
+    Height = 26
+    Top = 90
+    Width = 42
     Caption = 'Time'
   end
   object TimeEdit: TEdit
-    Left = 344
-    Height = 27
-    Top = 55
-    Width = 360
+    Left = 516
+    Height = 43
+    Top = 82
+    Width = 540
     TabOrder = 3
   end
   object SnapshotLabel: TLabel
-    Left = 16
-    Height = 17
-    Top = 96
-    Width = 127
+    Left = 24
+    Height = 26
+    Top = 144
+    Width = 180
     Caption = 'Snapshot: not loaded'
   end
   object FirstButton: TButton
-    Left = 16
-    Height = 30
-    Top = 144
-    Width = 36
+    Left = 24
+    Height = 45
+    Top = 184
+    Width = 54
     Caption = '|<'
+    TabOrder = 4
     OnClick = FirstButtonClick
-    TabOrder = 5
   end
   object PrevButton: TButton
-    Left = 56
-    Height = 30
-    Top = 144
-    Width = 36
+    Left = 84
+    Height = 45
+    Top = 184
+    Width = 54
     Caption = '<'
+    TabOrder = 5
     OnClick = PrevButtonClick
     OnMouseDown = NavButtonMouseDown
     OnMouseUp = NavButtonMouseUp
-    TabOrder = 5
   end
   object TimeTrackBar: TTrackBar
-    Left = 100
-    Height = 32
-    Top = 144
-    Width = 696
-    Anchors = [akTop, akLeft, akRight]
+    Left = 150
+    Height = 48
+    Top = 184
+    Width = 1050
     Max = 100
+    Position = 0
     TickStyle = tsNone
     OnChange = TimeTrackBarChange
+    Anchors = [akTop, akLeft, akRight]
+    TabOrder = 6
     OnMouseDown = TimeTrackBarMouseDown
     OnMouseUp = TimeTrackBarMouseUp
     OnKeyUp = TimeTrackBarKeyUp
-    TabOrder = 6
   end
   object NextButton: TButton
-    Left = 804
-    Height = 30
-    Top = 144
-    Width = 36
+    Left = 1212
+    Height = 45
+    Top = 184
+    Width = 54
     Anchors = [akTop, akRight]
     Caption = '>'
+    TabOrder = 7
     OnClick = NextButtonClick
     OnMouseDown = NavButtonMouseDown
     OnMouseUp = NavButtonMouseUp
-    TabOrder = 7
   end
   object LastButton: TButton
-    Left = 844
-    Height = 30
-    Top = 144
-    Width = 36
+    Left = 1272
+    Height = 45
+    Top = 184
+    Width = 54
     Anchors = [akTop, akRight]
     Caption = '>|'
+    TabOrder = 10
     OnClick = LastButtonClick
-    TabOrder = 8
   end
   object ForkLabel: TLabel
-    Left = 72
-    Height = 17
-    Top = 176
-    Width = 0
-    Caption = ''
-  end
-  object WindowStartLabel: TLabel
-    Left = 100
-    Height = 17
+    Left = 108
+    Height = 1
     Top = 200
-    Width = 64
-    Caption = ''
-  end
-  object CurrentHashLabel: TLabel
-    Left = 440
-    Height = 17
-    Top = 120
-    Width = 64
-    Caption = '—'
-  end
-  object WindowEndLabel: TLabel
-    Left = 732
-    Height = 17
-    Top = 200
-    Width = 64
-    Caption = ''
+    Width = 1
   end
   object ScaleLabel: TLabel
-    Left = 16
-    Height = 17
-    Top = 224
-    Width = 300
-    Caption = ''
+    Left = 24
+    Height = 1
+    Top = 235
+    Width = 1
   end
   object CommitInfoLabel: TLabel
-    Left = 16
-    Height = 17
-    Top = 248
-    Width = 110
+    Left = 24
+    Height = 26
+    Top = 272
+    Width = 168
     Caption = 'Commit: not loaded'
   end
   object CompareLabel: TLabel
-    Left = 16
-    Height = 17
-    Top = 272
-    Width = 80
+    Left = 24
+    Height = 26
+    Top = 308
+    Width = 105
     Caption = 'Compare: —'
   end
   object PathLabel: TLabel
-    Left = 16
-    Height = 17
-    Top = 296
-    Width = 40
+    Left = 24
+    Height = 26
+    Top = 344
+    Width = 55
     Caption = 'Path: /'
   end
   object TreeList: TListBox
-    Left = 16
-    Height = 298
-    Top = 320
-    Width = 734
+    Left = 24
+    Height = 483
+    Top = 382
+    Width = 1101
     Anchors = [akTop, akLeft, akRight, akBottom]
-    ItemHeight = 20
-    OnDblClick = TreeListDblClick
-    OnDrawItem = TreeListDrawItem
+    ItemHeight = 30
     PopupMenu = FilePopup
     Style = lbOwnerDrawFixed
     TabOrder = 8
+    TopIndex = -1
+    OnDblClick = TreeListDblClick
+    OnDrawItem = TreeListDrawItem
   end
   object VerticalTimeTrackBar: TTrackBar
-    Left = 746
-    Height = 298
-    Top = 320
-    Width = 40
-    Anchors = [akTop, akRight, akBottom]
+    Left = 1125
+    Height = 480
+    Top = 382
+    Width = 60
     Max = 1000
     Orientation = trVertical
+    Position = 0
     TickStyle = tsNone
     OnChange = VerticalTimeTrackBarChange
+    Anchors = [akTop, akRight, akBottom]
+    TabOrder = 9
     OnMouseDown = VerticalTimeTrackBarMouseDown
     OnMouseUp = VerticalTimeTrackBarMouseUp
     OnKeyUp = VerticalTimeTrackBarKeyUp
-    TabOrder = 9
   end
   object TimeNowLabel: TLabel
-    Left = 737
-    Height = 17
-    Top = 300
-    Width = 80
+    Left = 1192
+    Height = 26
+    Top = 344
+    Width = 39
     Anchors = [akTop, akRight]
     Caption = 'Now'
   end
   object TimeStartLabel: TLabel
-    Left = 720
-    Height = 17
-    Top = 622
-    Width = 100
+    Left = 1235
+    Height = 1
+    Top = 900
+    Width = 1
     Anchors = [akRight, akBottom]
-    Caption = ''
   end
   object TimeCurrentLabel: TLabel
-    Left = 794
-    Height = 17
-    Top = 460
-    Width = 110
+    Left = 1361
+    Height = 1
+    Top = 669
+    Width = 1
     Anchors = [akRight]
-    Caption = ''
   end
   object SelectDirectoryDialog1: TSelectDirectoryDialog
     Title = 'Select Git Repository'
-    left = 816
-    top = 80
+    Left = 1224
+    Top = 120
   end
   object FilePopup: TPopupMenu
     OnPopup = FilePopupPopup
-    left = 704
-    top = 96
+    Left = 1056
+    Top = 120
     object OpenMenuItem: TMenuItem
       Caption = 'Open'
       OnClick = OpenMenuItemClick
@@ -257,10 +237,14 @@ object MainForm: TMainForm
       Caption = 'Visual Diff'
       OnClick = VisualDiffMenuItemClick
     end
+    object HistoryMenuItem: TMenuItem
+      Caption = 'History...'
+      OnClick = HistoryMenuItemClick
+    end
   end
   object SaveDialog: TSaveDialog
     Options = [ofOverwritePrompt, ofEnableSizing]
-    left = 744
-    top = 96
+    Left = 1116
+    Top = 120
   end
 end

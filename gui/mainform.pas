@@ -14,15 +14,13 @@ type
     BranchLabel: TLabel;
     CommitInfoLabel: TLabel;
     CompareLabel: TLabel;
-    WindowStartLabel: TLabel;
-    CurrentHashLabel: TLabel;
     ScaleLabel: TLabel;
-    WindowEndLabel: TLabel;
     ForkLabel: TLabel;
     FilePopup: TPopupMenu;
     OpenMenuItem: TMenuItem;
     SaveAsMenuItem: TMenuItem;
     VisualDiffMenuItem: TMenuItem;
+    HistoryMenuItem: TMenuItem;
     SaveDialog: TSaveDialog;
     BrowseButton: TButton;
     NextButton: TButton;
@@ -77,6 +75,12 @@ type
     procedure OpenMenuItemClick(Sender: TObject);
     procedure SaveAsMenuItemClick(Sender: TObject);
     procedure VisualDiffMenuItemClick(Sender: TObject);
+    procedure HistoryMenuItemClick(Sender: TObject);
+    procedure HistoryListDblClick(Sender: TObject);
+    procedure HistoryListSelectionChange(Sender: TObject; User: Boolean);
+    procedure HistoryPopupPopup(Sender: TObject);
+    procedure HistoryJumpMenuItemClick(Sender: TObject);
+    procedure HistoryVisualDiffMenuItemClick(Sender: TObject);
   private
     FCommitHash: string;
     FCurrentPath: string;
@@ -108,6 +112,9 @@ type
     FNewestUnixTime: Int64;
     FTimePreviewTimer: TTimer;
     FSelectedUnixTime: Int64;
+    FHistoryList: TListBox;
+    FHistoryPath: string;
+    FHistorySelectionUpdating: Boolean;
     procedure LoadSnapshot;
     procedure LoadCurrentDirectory;
     procedure RefreshCurrentDirectory;
@@ -184,6 +191,9 @@ begin
   FOldestUnixTime := 0;
   FNewestUnixTime := 0;
   FSelectedUnixTime := 0;
+  FHistoryList := nil;
+  FHistoryPath := '';
+  FHistorySelectionUpdating := False;
   FNavTimer := TTimer.Create(Self);
   FNavTimer.Enabled := False;
   FNavTimer.Interval := 250;
@@ -193,9 +203,6 @@ begin
   FTimePreviewTimer.Interval := 350;
   FTimePreviewTimer.OnTimer := @TimePreviewTimerTimer;
   BranchEdit.Items.Clear;
-  WindowStartLabel.Caption := '';
-  CurrentHashLabel.Caption := '—';
-  WindowEndLabel.Caption := '';
   ForkLabel.Caption := '';
   ScaleLabel.Caption := '';
   TimeNowLabel.Caption := 'Now';
@@ -470,76 +477,100 @@ begin
 end;
 
 function TMainForm.UnixTimeToSlider(UnixTime: Int64): Integer;
-var
-  Span, Offset: Int64;
 begin
-  Result := 0;
-  Span := FNewestUnixTime - FOldestUnixTime;
+  { The vertical rail is proportional to commit position, not elapsed time.
+    Oldest commit is at the bottom; newest commit is at the top. }
+  if FBranchCommitCount <= 1 then
+    Exit(0);
 
-  if Span <= 0 then
-    Exit;
-
-  Offset := UnixTime - FOldestUnixTime;
-  if Offset < 0 then
-    Offset := 0;
-  if Offset > Span then
-    Offset := Span;
-
-  { Vertical trackbar: top is 0, bottom is 1000. }
-  Result := 1000 - Round((Offset * 1000.0) / Span);
+  Result := 1000 - Round(
+    (FCurrentBranchPosition * 1000.0) /
+    (FBranchCommitCount - 1)
+  );
 end;
 
 function TMainForm.SliderToUnixTime(SliderPos: Integer): Int64;
 var
-  Span: Int64;
+  BranchPos: Integer;
 begin
+  Result := 0;
+
+  if FBranchIndex.Count = 0 then
+    Exit;
+
   if SliderPos < 0 then
     SliderPos := 0;
   if SliderPos > 1000 then
     SliderPos := 1000;
 
-  Span := FNewestUnixTime - FOldestUnixTime;
-  if Span <= 0 then
-  begin
-    Result := FOldestUnixTime;
-    Exit;
-  end;
+  if FBranchIndex.Count = 1 then
+    BranchPos := 0
+  else
+    BranchPos := Round(
+      ((1000 - SliderPos) * (FBranchIndex.Count - 1)) / 1000.0
+    );
 
-  { Vertical trackbar: top is newest, bottom is oldest. }
-  Result := FOldestUnixTime +
-    Round((Span * (1000 - SliderPos)) / 1000.0);
+  if BranchPos < 0 then
+    BranchPos := 0;
+  if BranchPos >= FBranchIndex.Count then
+    BranchPos := FBranchIndex.Count - 1;
+
+  Result := CommitUnixTime(
+    RepoEdit.Text,
+    FBranchIndex[BranchPos]
+  );
 end;
 
 procedure TMainForm.SelectTimePosition(SliderPos: Integer);
 var
+  BranchPos: Integer;
   CommitHash: string;
 begin
   if not VerticalTimeTrackBar.Enabled then
     Exit;
 
-  FSelectedUnixTime := SliderToUnixTime(SliderPos);
+  if FBranchIndex.Count = 0 then
+    Exit;
 
-  CommitHash := ResolveCommitAtUnixTime(
-    RepoEdit.Text,
-    BranchEdit.Text,
-    FSelectedUnixTime
-  );
+  if SliderPos < 0 then
+    SliderPos := 0;
+  if SliderPos > 1000 then
+    SliderPos := 1000;
 
-  if CommitHash <> '' then
-    SelectCommitHash(CommitHash);
+  if FBranchIndex.Count = 1 then
+    BranchPos := 0
+  else
+    BranchPos := Round(
+      ((1000 - SliderPos) * (FBranchIndex.Count - 1)) / 1000.0
+    );
 
-  UpdateVerticalTimeSlider;
+  if BranchPos < 0 then
+    BranchPos := 0;
+  if BranchPos >= FBranchIndex.Count then
+    BranchPos := FBranchIndex.Count - 1;
+
+  CommitHash := FBranchIndex[BranchPos];
+  SelectCommitHash(CommitHash);
 end;
 
 procedure TMainForm.UpdateVerticalTimeSlider;
+var
+  SliderPos: Integer;
 begin
-  if FSelectedUnixTime = 0 then
+  if FBranchCommitCount <= 0 then
     Exit;
+
+  if FBranchCommitCount = 1 then
+    SliderPos := 0
+  else
+    SliderPos := 1000 - Round(
+      (FCurrentBranchPosition * 1000.0) /
+      (FBranchCommitCount - 1)
+    );
 
   FLoadingTimeline := True;
   try
-    VerticalTimeTrackBar.Position :=
-      UnixTimeToSlider(FSelectedUnixTime);
+    VerticalTimeTrackBar.Position := SliderPos;
   finally
     FLoadingTimeline := False;
   end;
@@ -577,7 +608,7 @@ begin
     Exit;
   end;
 
-  P := UnixTimeToSlider(FSelectedUnixTime);
+  P := VerticalTimeTrackBar.Position;
 
   { Endpoint labels already identify these positions. }
   if (P = 0) or (P = 1000) then
@@ -630,17 +661,41 @@ end;
 
 procedure TMainForm.SelectCommitHash(const CommitHash: string);
 var
-  I: Integer;
+  I, J: Integer;
+  FullHash: string;
 begin
   if CommitHash = '' then
     Exit;
 
-  if FTimeline.IndexOf(CommitHash) < 0 then
-    BuildBranchTimeline(CommitHash);
+  FullHash := CommitHash;
 
-  I := FTimeline.IndexOf(CommitHash);
+  { History rows use abbreviated hashes.  Normalize an abbreviation against
+    the full branch index before doing exact timeline lookups. }
+  if Length(FullHash) < 40 then
+  begin
+    for J := 0 to FBranchIndex.Count - 1 do
+      if Pos(LowerCase(FullHash), LowerCase(FBranchIndex[J])) = 1 then
+      begin
+        FullHash := FBranchIndex[J];
+        Break;
+      end;
+  end;
+
+  if FTimeline.IndexOf(FullHash) < 0 then
+    BuildBranchTimeline(FullHash);
+
+  I := FTimeline.IndexOf(FullHash);
   if I >= 0 then
+  begin
     SelectTimelineIndex(I);
+
+    { Direct commit navigation defines the selected time as the commit time.
+      This keeps the horizontal commit slider, vertical time slider, and
+      snapshot synchronized.  Time-driven navigation restores its requested
+      time after this call. }
+    FSelectedUnixTime := CommitUnixTime(RepoEdit.Text, FCommitHash);
+    UpdateVerticalTimeSlider;
+  end;
 end;
 
 procedure TMainForm.SelectTimelineIndex(Index: Integer);
@@ -729,26 +784,12 @@ var
 begin
   if FTimeline.Count = 0 then
   begin
-    WindowStartLabel.Caption := '';
-    CurrentHashLabel.Caption := '—';
-    WindowEndLabel.Caption := '';
     ForkLabel.Caption := '';
     ScaleLabel.Caption := '';
     Exit;
   end;
 
-  WindowStartLabel.Caption := Copy(Trim(FTimeline[0]), 1, 8);
-  WindowEndLabel.Caption := Copy(
-    Trim(FTimeline[FTimeline.Count - 1]), 1, 8);
 
-  CurrentHashLabel.Caption :=
-    Copy(FCommitHash, 1, 8) + ' (' +
-    IntToStr(FCurrentBranchPosition + 1) + ' / ' +
-    IntToStr(FBranchCommitCount) + ')';
-
-  WindowStartLabel.Left := TimeTrackBar.Left;
-  WindowEndLabel.Left := TimeTrackBar.Left + TimeTrackBar.Width -
-    WindowEndLabel.Width;
 
   PixelRange := TimeTrackBar.Width;
   if FBranchCommitCount > 1 then
@@ -758,7 +799,6 @@ begin
   else
     X := TimeTrackBar.Left;
 
-  CurrentHashLabel.Left := X - (CurrentHashLabel.Width div 2);
 
   if FForkHash <> '' then
     ForkLabel.Caption := '^ fork ' + Copy(FForkHash, 1, 8)
@@ -1409,6 +1449,7 @@ begin
   OpenMenuItem.Enabled := IsFile;
   SaveAsMenuItem.Enabled := IsFile;
   VisualDiffMenuItem.Enabled := IsFile and (Status = 'modified');
+  HistoryMenuItem.Enabled := IsFile;
 end;
 
 procedure TMainForm.OpenMenuItemClick(Sender: TObject);
@@ -1468,6 +1509,281 @@ begin
   end;
 end;
 
+
+procedure TMainForm.HistoryMenuItemClick(Sender: TObject);
+var
+  PathName: string;
+  Lines: TStringList;
+  HistoryForm: TForm;
+  ButtonPanel: TPanel;
+  CloseButton: TButton;
+  HistoryPopup: TPopupMenu;
+  JumpItem, VisualDiffItem: TMenuItem;
+begin
+  PathName := SelectedHistoricalPath;
+  if PathName = '' then
+    Exit;
+
+  Lines := TStringList.Create;
+  try
+    GetHistory(
+      RepoEdit.Text,
+      BranchEdit.Text,
+      PathName,
+      Lines
+    );
+
+    if Lines.Count = 0 then
+    begin
+      MessageDlg('No history found for ' + PathName,
+        mtInformation, [mbOK], 0);
+      Exit;
+    end;
+
+    HistoryForm := TForm.CreateNew(Self);
+    try
+      HistoryForm.Caption := 'History: ' + PathName;
+      HistoryForm.Position := poScreenCenter;
+      HistoryForm.Width := 820;
+      HistoryForm.Height := 520;
+
+      ButtonPanel := TPanel.Create(HistoryForm);
+      ButtonPanel.Parent := HistoryForm;
+      ButtonPanel.Align := alBottom;
+      ButtonPanel.Height := 44;
+      ButtonPanel.BevelOuter := bvNone;
+
+      CloseButton := TButton.Create(HistoryForm);
+      CloseButton.Parent := ButtonPanel;
+      CloseButton.Caption := 'Close';
+      CloseButton.Left := 8;
+      CloseButton.Top := 8;
+      CloseButton.Width := 88;
+      CloseButton.ModalResult := mrCancel;
+
+      HistoryPopup := TPopupMenu.Create(HistoryForm);
+      HistoryPopup.OnPopup := @HistoryPopupPopup;
+
+      JumpItem := TMenuItem.Create(HistoryPopup);
+      JumpItem.Caption := 'Jump';
+      JumpItem.OnClick := @HistoryJumpMenuItemClick;
+      HistoryPopup.Items.Add(JumpItem);
+
+      VisualDiffItem := TMenuItem.Create(HistoryPopup);
+      VisualDiffItem.Caption := 'Visual Diff';
+      VisualDiffItem.OnClick := @HistoryVisualDiffMenuItemClick;
+      HistoryPopup.Items.Add(VisualDiffItem);
+
+      FHistoryList := TListBox.Create(HistoryForm);
+      FHistoryList.Parent := HistoryForm;
+      FHistoryList.Align := alClient;
+      FHistoryList.Font.Name := 'Monospace';
+      FHistoryList.Items.Assign(Lines);
+      FHistoryList.ItemIndex := 0;
+      FHistoryList.MultiSelect := True;
+      FHistoryList.ExtendedSelect := True;
+      FHistoryList.DoubleBuffered := True;
+      FHistoryList.PopupMenu := HistoryPopup;
+      FHistoryList.OnDblClick := @HistoryListDblClick;
+      FHistoryList.OnSelectionChange := @HistoryListSelectionChange;
+
+      FHistoryPath := PathName;
+      FHistorySelectionUpdating := False;
+
+      HistoryForm.ShowModal;
+    finally
+      FHistoryList := nil;
+      FHistoryPath := '';
+      FHistorySelectionUpdating := False;
+      HistoryForm.Free;
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+procedure TMainForm.HistoryListDblClick(Sender: TObject);
+begin
+  HistoryJumpMenuItemClick(Sender);
+end;
+
+procedure TMainForm.HistoryListSelectionChange(Sender: TObject; User: Boolean);
+var
+  I, SelectedCount, KeepOther: Integer;
+begin
+  if FHistorySelectionUpdating or (FHistoryList = nil) then
+    Exit;
+
+  SelectedCount := 0;
+  for I := 0 to FHistoryList.Items.Count - 1 do
+    if FHistoryList.Selected[I] then
+      Inc(SelectedCount);
+
+  if SelectedCount <= 2 then
+    Exit;
+
+  FHistorySelectionUpdating := True;
+  try
+    { Keep the focused row and one other selected row. }
+    KeepOther := -1;
+    for I := 0 to FHistoryList.Items.Count - 1 do
+      if FHistoryList.Selected[I] and (I <> FHistoryList.ItemIndex) then
+      begin
+        if KeepOther < 0 then
+          KeepOther := I
+        else
+          FHistoryList.Selected[I] := False;
+      end;
+  finally
+    FHistorySelectionUpdating := False;
+  end;
+end;
+
+procedure TMainForm.HistoryPopupPopup(Sender: TObject);
+var
+  I, SelectedCount: Integer;
+begin
+  if (Sender = nil) or not (Sender is TPopupMenu) or
+     (FHistoryList = nil) then
+    Exit;
+
+  SelectedCount := 0;
+  for I := 0 to FHistoryList.Items.Count - 1 do
+    if FHistoryList.Selected[I] then
+      Inc(SelectedCount);
+
+  TPopupMenu(Sender).Items[0].Enabled :=
+    SelectedCount = 1;
+  TPopupMenu(Sender).Items[1].Enabled :=
+    SelectedCount = 2;
+end;
+
+procedure TMainForm.HistoryJumpMenuItemClick(Sender: TObject);
+var
+  S, CommitHash: string;
+  P1, P2: Integer;
+begin
+  if (FHistoryList = nil) or (FHistoryList.ItemIndex < 0) then
+    Exit;
+
+  S := FHistoryList.Items[FHistoryList.ItemIndex];
+
+  P1 := Pos('  ', S);
+  if P1 = 0 then
+    Exit;
+
+  Delete(S, 1, P1 + 1);
+  while (Length(S) > 0) and (S[1] = ' ') do
+    Delete(S, 1, 1);
+
+  P2 := Pos('  ', S);
+  if P2 = 0 then
+    CommitHash := Trim(S)
+  else
+    CommitHash := Trim(Copy(S, 1, P2 - 1));
+
+  if CommitHash <> '' then
+    SelectCommitHash(CommitHash);
+end;
+
+procedure TMainForm.HistoryVisualDiffMenuItemClick(Sender: TObject);
+var
+  I, Sel1, Sel2, TempIndex, P1, P2: Integer;
+  S, Hash1, Hash2, OldFile, NewFile: string;
+  P: TProcess;
+
+  function HashFromLine(const Line: string): string;
+  var
+    T: string;
+    Q1, Q2: Integer;
+  begin
+    Result := '';
+    T := Line;
+
+    Q1 := Pos('  ', T);
+    if Q1 = 0 then
+      Exit;
+
+    Delete(T, 1, Q1 + 1);
+    while (Length(T) > 0) and (T[1] = ' ') do
+      Delete(T, 1, 1);
+
+    Q2 := Pos('  ', T);
+    if Q2 = 0 then
+      Result := Trim(T)
+    else
+      Result := Trim(Copy(T, 1, Q2 - 1));
+  end;
+
+  function FullHash(const ShortHash: string): string;
+  var
+    J: Integer;
+  begin
+    Result := ShortHash;
+    if Length(ShortHash) >= 40 then
+      Exit;
+
+    for J := 0 to FBranchIndex.Count - 1 do
+      if Pos(LowerCase(ShortHash), LowerCase(FBranchIndex[J])) = 1 then
+      begin
+        Result := FBranchIndex[J];
+        Exit;
+      end;
+  end;
+
+begin
+  if (FHistoryList = nil) or (FHistoryPath = '') then
+    Exit;
+
+  Sel1 := -1;
+  Sel2 := -1;
+
+  for I := 0 to FHistoryList.Items.Count - 1 do
+    if FHistoryList.Selected[I] then
+    begin
+      if Sel1 < 0 then
+        Sel1 := I
+      else if Sel2 < 0 then
+        Sel2 := I;
+    end;
+
+  if (Sel1 < 0) or (Sel2 < 0) then
+    Exit;
+
+  { git log is newest-first.  Put older on left, newer on right. }
+  if Sel1 < Sel2 then
+  begin
+    TempIndex := Sel1;
+    Sel1 := Sel2;
+    Sel2 := TempIndex;
+  end;
+
+  Hash1 := FullHash(HashFromLine(FHistoryList.Items[Sel1]));
+  Hash2 := FullHash(HashFromLine(FHistoryList.Items[Sel2]));
+
+  if (Hash1 = '') or (Hash2 = '') then
+    Exit;
+
+  MaterializeTempFile(Hash1, FHistoryPath, OldFile);
+  MaterializeTempFile(Hash2, FHistoryPath, NewFile);
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := 'meld';
+    P.Parameters.Add(OldFile);
+    P.Parameters.Add(NewFile);
+    P.Options := [];
+    try
+      P.Execute;
+    except
+      on E: Exception do
+        MessageDlg('Unable to launch visual diff: ' + E.Message,
+          mtError, [mbOK], 0);
+    end;
+  finally
+    P.Free;
+  end;
+end;
 
 procedure TMainForm.TreeListDblClick(Sender: TObject);
 var
