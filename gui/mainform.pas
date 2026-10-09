@@ -29,6 +29,8 @@ type
     HistoryMenuItem: TMenuItem;
     SaveDialog: TSaveDialog;
     BrowseButton: TButton;
+    MountButton: TButton;
+    MountsButton: TButton;
     NextButton: TButton;
     PathLabel: TLabel;
     FirstButton: TButton;
@@ -47,6 +49,8 @@ type
     TreeList: TListBox;
     SelectDirectoryDialog1: TSelectDirectoryDialog;
     procedure BrowseButtonClick(Sender: TObject);
+    procedure MountButtonClick(Sender: TObject);
+    procedure MountsButtonClick(Sender: TObject);
     procedure BranchEditChange(Sender: TObject);
     procedure TagButtonClick(Sender: TObject);
     procedure TagChooserAccept(Sender: TObject);
@@ -63,7 +67,7 @@ type
     procedure NavButtonMouseUp(Sender: TObject; Button: TMouseButton;
       Shift: TShiftState; X, Y: Integer);
     procedure NavTimerTimer(Sender: TObject);
-    procedure TimePreviewTimerTimer(Sender: TObject);
+    procedure VerticalPreviewTimerTimer(Sender: TObject);
     procedure TimeTrackBarChange(Sender: TObject);
     procedure TimeTrackBarMouseDown(Sender: TObject; Button: TMouseButton;
       Shift: TShiftState; X, Y: Integer);
@@ -103,7 +107,6 @@ type
     FPreviousCommitHash: string;
     FLoadingTimeline: Boolean;
     FLoadingBranches: Boolean;
-    FLoadingTags: Boolean;
     FTagChooser: TForm;
     FTagChooserList: TListBox;
     FForkIndex: Integer;
@@ -112,9 +115,7 @@ type
     FMergeHash: string;
     FWindowSize: Integer;
     FWindowPredecessor: string;
-    FHasNewer: Boolean;
     FBranchCommitCount: Integer;
-    FReachableCommitCount: Integer;
     FAfterForkCount: Integer;
     FCurrentBranchPosition: Integer;
     FNavTimer: TTimer;
@@ -122,17 +123,20 @@ type
     FNavHoldTicks: Integer;
     FNavRepeated: Boolean;
     FNavKey: Word;
-    FDraggingTimeline: Boolean;
+    FDraggingVerticalSliderline: Boolean;
     FPendingTimelinePosition: Integer;
-    FDraggingTime: Boolean;
-    FPendingTimePosition: Integer;
-    FOldestUnixTime: Int64;
-    FNewestUnixTime: Int64;
-    FTimePreviewTimer: TTimer;
-    FSelectedUnixTime: Int64;
+    FDraggingVerticalSlider: Boolean;
+    FPendingVerticalPosition: Integer;
+    FOldestCommitTime: Int64;
+    FNewestCommitTime: Int64;
+    FVerticalPreviewTimer: TTimer;
+    FSelectedCommitTime: Int64;
     FHistoryList: TListBox;
     FHistoryPath: string;
     FHistorySelectionUpdating: Boolean;
+    FMountCommits: TStringList;
+    FMountPoints: TStringList;
+    FMountList: TListBox;
     procedure LoadSnapshot;
     procedure LoadCurrentDirectory;
     procedure RefreshCurrentDirectory;
@@ -152,8 +156,8 @@ type
     procedure UpdateTimelineLabels;
     procedure UpdateForkInfo;
     function ResolveSliderCommit(SliderPos: Integer): string;
-    function UnixTimeToSlider(UnixTime: Int64): Integer;
-    function SliderToUnixTime(SliderPos: Integer): Int64;
+    function CurrentCommitToVerticalSlider: Integer;
+    function VerticalSliderToCommitTime(SliderPos: Integer): Int64;
     procedure SelectTimePosition(SliderPos: Integer);
     procedure UpdateVerticalTimeSlider;
     procedure UpdateTimeRailLabels;
@@ -174,6 +178,16 @@ type
     procedure MaterializeTempFile(const CommitHash, RepoPath: string;
       out TempFile: string);
     function JoinRepoPath(const BasePath, EntryName: string): string;
+    function MountHelperPath: string;
+    function SnapshotMountPoint(const Repo, CommitHash: string): string;
+    procedure MountCurrentSnapshot;
+    procedure UnmountIndex(Index: Integer);
+    procedure UnmountAllSnapshots;
+    procedure RefreshMountList;
+    procedure MountOpenClick(Sender: TObject);
+    procedure MountUnmountClick(Sender: TObject);
+    procedure MountUnmountAllClick(Sender: TObject);
+    procedure MountVisualDiffClick(Sender: TObject);
   public
   end;
 
@@ -184,11 +198,338 @@ implementation
 
 {$R *.lfm}
 
-procedure GTMDebug(const S: string);
+
+
+
+function TMainForm.MountHelperPath: string;
 begin
-  WriteLn(StdErr, '[gtm-debug] ', S);
+  Result := IncludeTrailingPathDelimiter(ExtractFilePath(ExpandFileName(ParamStr(0)))) +
+    'gtm-mount';
 end;
 
+function TMainForm.SnapshotMountPoint(const Repo, CommitHash: string): string;
+var
+  BaseDir, RepoName, ShortHash: string;
+begin
+  BaseDir := IncludeTrailingPathDelimiter(GetEnvironmentVariable('HOME')) +
+    '.cache/gtm/mounts';
+  RepoName := ExtractFileName(ExcludeTrailingPathDelimiter(ExpandFileName(Repo)));
+  ShortHash := Copy(CommitHash, 1, 8);
+  Result := IncludeTrailingPathDelimiter(BaseDir) + RepoName + '-' + ShortHash;
+end;
+
+procedure TMainForm.RefreshMountList;
+var
+  I: Integer;
+begin
+  if FMountList = nil then
+    Exit;
+
+  FMountList.Items.Clear;
+  for I := 0 to FMountPoints.Count - 1 do
+    FMountList.Items.Add(
+      Copy(FMountCommits[I], 1, 8) + '   ' + FMountPoints[I]
+    );
+
+  if FMountList.Items.Count > 0 then
+    FMountList.ItemIndex := 0;
+end;
+
+procedure TMainForm.MountCurrentSnapshot;
+var
+  Helper, MountPoint, RepoPath: string;
+  P: TProcess;
+  Existing: Integer;
+begin
+  if (Trim(RepoEdit.Text) = '') or (Trim(FCommitHash) = '') then
+  begin
+    ShowMessage('No snapshot is selected.');
+    Exit;
+  end;
+
+  RepoPath := ExpandFileName(RepoEdit.Text);
+  MountPoint := SnapshotMountPoint(RepoPath, FCommitHash);
+
+  Existing := FMountPoints.IndexOf(MountPoint);
+  if Existing >= 0 then
+  begin
+    ShowMessage('Snapshot is already mounted at:' + LineEnding + MountPoint);
+    Exit;
+  end;
+
+  Helper := MountHelperPath;
+  if not FileExists(Helper) then
+  begin
+    ShowMessage('gtm-mount was not found:' + LineEnding + Helper +
+      LineEnding + LineEnding + 'Run make mount first.');
+    Exit;
+  end;
+
+  if not ForceDirectories(MountPoint) then
+  begin
+    ShowMessage('Could not create mountpoint:' + LineEnding + MountPoint);
+    Exit;
+  end;
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := Helper;
+    P.Parameters.Add(RepoPath);
+    P.Parameters.Add(FCommitHash);
+    P.Parameters.Add(MountPoint);
+    P.Options := [];
+    P.Execute;
+  finally
+    P.Free;
+  end;
+
+  FMountCommits.Add(FCommitHash);
+  FMountPoints.Add(MountPoint);
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := 'xdg-open';
+    P.Parameters.Add(MountPoint);
+    P.Options := [];
+    try
+      P.Execute;
+    except
+      { The mount is still valid even if no desktop file browser is available. }
+    end;
+  finally
+    P.Free;
+  end;
+end;
+
+procedure TMainForm.UnmountIndex(Index: Integer);
+var
+  P: TProcess;
+  MountPoint: string;
+begin
+  if (Index < 0) or (Index >= FMountPoints.Count) then
+    Exit;
+
+  MountPoint := FMountPoints[Index];
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := 'fusermount3';
+    P.Parameters.Add('-u');
+    P.Parameters.Add(MountPoint);
+    P.Options := [poWaitOnExit];
+    P.Execute;
+
+    if P.ExitStatus <> 0 then
+    begin
+      ShowMessage('Could not unmount:' + LineEnding + MountPoint +
+        LineEnding + LineEnding +
+        'The mount may still be busy.');
+      Exit;
+    end;
+  finally
+    P.Free;
+  end;
+
+  FMountCommits.Delete(Index);
+  FMountPoints.Delete(Index);
+
+  if DirectoryExists(MountPoint) then
+    RemoveDir(MountPoint);
+
+  RefreshMountList;
+end;
+
+procedure TMainForm.UnmountAllSnapshots;
+var
+  I: Integer;
+  P: TProcess;
+  MountPoint: string;
+begin
+  for I := FMountPoints.Count - 1 downto 0 do
+  begin
+    MountPoint := FMountPoints[I];
+
+    P := TProcess.Create(nil);
+    try
+      P.Executable := 'fusermount3';
+      P.Parameters.Add('-u');
+      P.Parameters.Add(MountPoint);
+      P.Options := [poWaitOnExit];
+      try
+        P.Execute;
+      except
+        { Best-effort cleanup during shutdown. }
+      end;
+    finally
+      P.Free;
+    end;
+
+    if DirectoryExists(MountPoint) then
+      RemoveDir(MountPoint);
+
+    FMountCommits.Delete(I);
+    FMountPoints.Delete(I);
+  end;
+
+  RefreshMountList;
+end;
+
+procedure TMainForm.MountButtonClick(Sender: TObject);
+begin
+  MountCurrentSnapshot;
+end;
+
+procedure TMainForm.MountOpenClick(Sender: TObject);
+var
+  P: TProcess;
+begin
+  if (FMountList = nil) or
+     (FMountList.ItemIndex < 0) or
+     (FMountList.ItemIndex >= FMountPoints.Count) then
+    Exit;
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := 'xdg-open';
+    P.Parameters.Add(FMountPoints[FMountList.ItemIndex]);
+    P.Options := [];
+    P.Execute;
+  finally
+    P.Free;
+  end;
+end;
+
+procedure TMainForm.MountUnmountClick(Sender: TObject);
+begin
+  if FMountList = nil then
+    Exit;
+  UnmountIndex(FMountList.ItemIndex);
+end;
+
+procedure TMainForm.MountUnmountAllClick(Sender: TObject);
+begin
+  UnmountAllSnapshots;
+end;
+
+procedure TMainForm.MountVisualDiffClick(Sender: TObject);
+var
+  I, FirstIndex, SecondIndex, SelectedCount: Integer;
+  P: TProcess;
+begin
+  if FMountList = nil then
+    Exit;
+
+  FirstIndex := -1;
+  SecondIndex := -1;
+  SelectedCount := 0;
+
+  for I := 0 to FMountList.Items.Count - 1 do
+  begin
+    if FMountList.Selected[I] then
+    begin
+      Inc(SelectedCount);
+      if FirstIndex < 0 then
+        FirstIndex := I
+      else if SecondIndex < 0 then
+        SecondIndex := I;
+    end;
+  end;
+
+  if SelectedCount <> 2 then
+  begin
+    ShowMessage('Select exactly two mounted snapshots.');
+    Exit;
+  end;
+
+  P := TProcess.Create(nil);
+  try
+    P.Executable := 'meld';
+    P.Parameters.Add(FMountPoints[FirstIndex]);
+    P.Parameters.Add(FMountPoints[SecondIndex]);
+    P.Options := [];
+    try
+      P.Execute;
+    except
+      on E: Exception do
+        ShowMessage('Could not launch visual diff:' + LineEnding + E.Message);
+    end;
+  finally
+    P.Free;
+  end;
+end;
+
+procedure TMainForm.MountsButtonClick(Sender: TObject);
+var
+  Dialog: TForm;
+  ButtonPanel: TPanel;
+  OpenButton, VisualDiffButton, UnmountButton, UnmountAllButton, CloseButton: TButton;
+begin
+  Dialog := TForm.Create(Self);
+  try
+    Dialog.Caption := 'Mounted Snapshots';
+    Dialog.Position := poMainFormCenter;
+    Dialog.BorderStyle := bsSizeToolWin;
+    Dialog.ClientWidth := 720;
+    Dialog.ClientHeight := 330;
+
+    ButtonPanel := TPanel.Create(Dialog);
+    ButtonPanel.Parent := Dialog;
+    ButtonPanel.Align := alBottom;
+    ButtonPanel.Height := 52;
+    ButtonPanel.BevelOuter := bvNone;
+
+    OpenButton := TButton.Create(ButtonPanel);
+    OpenButton.Parent := ButtonPanel;
+    OpenButton.Caption := 'Open';
+    OpenButton.Left := 120;
+    OpenButton.Top := 10;
+    OpenButton.Width := 90;
+    OpenButton.OnClick := @MountOpenClick;
+
+    VisualDiffButton := TButton.Create(ButtonPanel);
+    VisualDiffButton.Parent := ButtonPanel;
+    VisualDiffButton.Caption := 'Visual Diff';
+    VisualDiffButton.Left := 216;
+    VisualDiffButton.Top := 10;
+    VisualDiffButton.Width := 110;
+    VisualDiffButton.OnClick := @MountVisualDiffClick;
+
+    UnmountButton := TButton.Create(ButtonPanel);
+    UnmountButton.Parent := ButtonPanel;
+    UnmountButton.Caption := 'Unmount';
+    UnmountButton.Left := 332;
+    UnmountButton.Top := 10;
+    UnmountButton.Width := 100;
+    UnmountButton.OnClick := @MountUnmountClick;
+
+    UnmountAllButton := TButton.Create(ButtonPanel);
+    UnmountAllButton.Parent := ButtonPanel;
+    UnmountAllButton.Caption := 'Unmount All';
+    UnmountAllButton.Left := 438;
+    UnmountAllButton.Top := 10;
+    UnmountAllButton.Width := 120;
+    UnmountAllButton.OnClick := @MountUnmountAllClick;
+
+    CloseButton := TButton.Create(ButtonPanel);
+    CloseButton.Parent := ButtonPanel;
+    CloseButton.Caption := 'Close';
+    CloseButton.Left := 564;
+    CloseButton.Top := 10;
+    CloseButton.Width := 90;
+    CloseButton.ModalResult := mrClose;
+
+    FMountList := TListBox.Create(Dialog);
+    FMountList.Parent := Dialog;
+    FMountList.Align := alClient;
+    FMountList.MultiSelect := True;
+
+    RefreshMountList;
+    Dialog.ShowModal;
+  finally
+    FMountList := nil;
+      Dialog.Free;
+  end;
+end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
@@ -203,37 +544,37 @@ begin
   FMergeHash := '';
   FLoadingTimeline := False;
   FLoadingBranches := False;
-  FLoadingTags := False;
   FForkIndex := -1;
   FForkHash := '';
   FWindowSize := 100;
   FWindowPredecessor := '';
-  FHasNewer := False;
   FBranchCommitCount := 0;
-  FReachableCommitCount := 0;
   FAfterForkCount := 0;
   FNavDirection := 0;
   FNavHoldTicks := 0;
   FNavRepeated := False;
   FNavKey := 0;
-  FDraggingTimeline := False;
+  FDraggingVerticalSliderline := False;
   FPendingTimelinePosition := 0;
-  FDraggingTime := False;
-  FPendingTimePosition := 0;
-  FOldestUnixTime := 0;
-  FNewestUnixTime := 0;
-  FSelectedUnixTime := 0;
+  FDraggingVerticalSlider := False;
+  FPendingVerticalPosition := 0;
+  FOldestCommitTime := 0;
+  FNewestCommitTime := 0;
+  FSelectedCommitTime := 0;
   FHistoryList := nil;
   FHistoryPath := '';
   FHistorySelectionUpdating := False;
+  FMountCommits := TStringList.Create;
+  FMountPoints := TStringList.Create;
+  FMountList := nil;
   FNavTimer := TTimer.Create(Self);
   FNavTimer.Enabled := False;
   FNavTimer.Interval := 250;
   FNavTimer.OnTimer := @NavTimerTimer;
-  FTimePreviewTimer := TTimer.Create(Self);
-  FTimePreviewTimer.Enabled := False;
-  FTimePreviewTimer.Interval := 350;
-  FTimePreviewTimer.OnTimer := @TimePreviewTimerTimer;
+  FVerticalPreviewTimer := TTimer.Create(Self);
+  FVerticalPreviewTimer.Enabled := False;
+  FVerticalPreviewTimer.Interval := 350;
+  FVerticalPreviewTimer.OnTimer := @VerticalPreviewTimerTimer;
   BranchEdit.Items.Clear;
   TagEdit.Text := '(none)';
   TagEdit.ReadOnly := True;
@@ -266,6 +607,9 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  UnmountAllSnapshots;
+  FMountPoints.Free;
+  FMountCommits.Free;
   FDeletedEntries.Free;
   FEntryStates.Free;
   FTagNames.Free;
@@ -345,7 +689,6 @@ var
   TagName, CommitHash, BranchName: string;
   I, J: Integer;
 begin
-  FLoadingTags := True;
   try
     FTagNames.Clear;
     FTagCommits.Clear;
@@ -393,20 +736,17 @@ begin
       Tags.Free;
     end;
   finally
-    FLoadingTags := False;
-  end;
+    end;
 end;
 
 procedure TMainForm.UpdateTagSelection;
 var
   I: Integer;
 begin
-  GTMDebug('UpdateTagSelection: FCommitHash=' + FCommitHash);
   TagEdit.Text := '(none)';
 
   if FCommitHash = '' then
   begin
-    GTMDebug('UpdateTagSelection: empty commit -> (none)');
     Exit;
   end;
 
@@ -414,20 +754,15 @@ begin
     if SameText(FTagCommits[I], FCommitHash) then
     begin
       TagEdit.Text := FTagNames[I];
-      GTMDebug('UpdateTagSelection: matched tag "' + FTagNames[I] +
-        '" at index ' + IntToStr(I));
       Exit;
     end;
 
-  GTMDebug('UpdateTagSelection: no matching tag -> (none)');
 end;
 
 procedure TMainForm.TagChooserAccept(Sender: TObject);
 begin
   if (FTagChooser <> nil) and (FTagChooserList <> nil) then
   begin
-    GTMDebug('TagChooserAccept: ItemIndex=' +
-      IntToStr(FTagChooserList.ItemIndex));
     if FTagChooserList.ItemIndex > 0 then
       FTagChooser.ModalResult := mrOk;
   end;
@@ -495,13 +830,10 @@ begin
     end;
 
     SelectedIndex := List.ItemIndex;
-    GTMDebug('TagButtonClick: selected index=' + IntToStr(SelectedIndex));
     if (SelectedIndex <= 0) or (SelectedIndex >= FTagCommits.Count) then
       Exit;
 
     TargetCommit := FTagCommits[SelectedIndex];
-    GTMDebug('TagButtonClick: tag="' + FTagNames[SelectedIndex] +
-      '" target=' + TargetCommit);
 
     FoundBranch := FBranchIndex.IndexOf(TargetCommit) >= 0;
 
@@ -528,8 +860,7 @@ begin
 
             FBranchIndex.Assign(CandidatePath);
             FBranchCommitCount := FBranchIndex.Count;
-            FReachableCommitCount := FBranchCommitCount;
-            FoundBranch := True;
+                      FoundBranch := True;
             Break;
           end;
         end;
@@ -642,7 +973,6 @@ begin
   FBranchIndex.Clear;
   BuildTimeline(RepoEdit.Text, BranchEdit.Text, FBranchIndex);
   FBranchCommitCount := FBranchIndex.Count;
-  FReachableCommitCount := FBranchCommitCount;
 end;
 
 procedure TMainForm.BuildBranchTimeline(const CenterCommit: string);
@@ -684,13 +1014,12 @@ begin
   else
     FWindowPredecessor := '';
 
-  FHasNewer := EndIndex < FBranchIndex.Count - 1;
 
-  FOldestUnixTime := CommitUnixTime(
+  FOldestCommitTime := CommitUnixTime(
     RepoEdit.Text,
     FBranchIndex[0]
   );
-  FNewestUnixTime := CommitUnixTime(
+  FNewestCommitTime := CommitUnixTime(
     RepoEdit.Text,
     FBranchIndex[FBranchIndex.Count - 1]
   );
@@ -706,10 +1035,10 @@ begin
 
     VerticalTimeTrackBar.Min := 0;
     VerticalTimeTrackBar.Max := 1000;
-    FSelectedUnixTime := CommitUnixTime(RepoEdit.Text, CenterCommit);
+    FSelectedCommitTime := CommitUnixTime(RepoEdit.Text, CenterCommit);
     VerticalTimeTrackBar.Position :=
-      UnixTimeToSlider(FSelectedUnixTime);
-    VerticalTimeTrackBar.Enabled := FNewestUnixTime > FOldestUnixTime;
+      CurrentCommitToVerticalSlider;
+    VerticalTimeTrackBar.Enabled := FNewestCommitTime > FOldestCommitTime;
   finally
     FLoadingTimeline := False;
   end;
@@ -733,7 +1062,7 @@ begin
   end;
 end;
 
-function TMainForm.UnixTimeToSlider(UnixTime: Int64): Integer;
+function TMainForm.CurrentCommitToVerticalSlider: Integer;
 begin
   { The vertical rail is proportional to commit position, not elapsed time.
     Oldest commit is at the bottom; newest commit is at the top. }
@@ -746,7 +1075,7 @@ begin
   );
 end;
 
-function TMainForm.SliderToUnixTime(SliderPos: Integer): Int64;
+function TMainForm.VerticalSliderToCommitTime(SliderPos: Integer): Int64;
 var
   BranchPos: Integer;
 begin
@@ -837,17 +1166,17 @@ end;
 
 procedure TMainForm.UpdateTimeRailLabels;
 begin
-  if FNewestUnixTime > 0 then
+  if FNewestCommitTime > 0 then
     TimeNowLabel.Caption :=
       FormatDateTime('yyyy-mm-dd hh:nn',
-        UnixToDateTime(FNewestUnixTime, False))
+        UnixToDateTime(FNewestCommitTime, False))
   else
     TimeNowLabel.Caption := '';
 
-  if FOldestUnixTime > 0 then
+  if FOldestCommitTime > 0 then
     TimeStartLabel.Caption :=
       FormatDateTime('yyyy-mm-dd hh:nn',
-        UnixToDateTime(FOldestUnixTime, False))
+        UnixToDateTime(FOldestCommitTime, False))
   else
     TimeStartLabel.Caption := '';
 
@@ -858,8 +1187,8 @@ procedure TMainForm.UpdateTimeCurrentLabel;
 var
   P, RailTop, RailBottom, Y: Integer;
 begin
-  if (FSelectedUnixTime <= 0) or
-     (FNewestUnixTime <= FOldestUnixTime) then
+  if (FSelectedCommitTime <= 0) or
+     (FNewestCommitTime <= FOldestCommitTime) then
   begin
     TimeCurrentLabel.Caption := '';
     Exit;
@@ -876,7 +1205,7 @@ begin
 
   TimeCurrentLabel.Caption :=
     FormatDateTime('yyyy-mm-dd hh:nn',
-      UnixToDateTime(FSelectedUnixTime, False));
+      UnixToDateTime(FSelectedCommitTime, False));
 
   RailTop := VerticalTimeTrackBar.Top;
   RailBottom := VerticalTimeTrackBar.Top +
@@ -921,7 +1250,6 @@ var
   I, J: Integer;
   FullHash: string;
 begin
-  GTMDebug('SelectCommitHash: requested=' + CommitHash);
   if CommitHash = '' then
     Exit;
 
@@ -942,9 +1270,6 @@ begin
   if FTimeline.IndexOf(FullHash) < 0 then
     BuildBranchTimeline(FullHash);
 
-  GTMDebug('SelectCommitHash: full=' + FullHash +
-    ' branchIndex=' + IntToStr(FBranchIndex.IndexOf(FullHash)) +
-    ' timelineIndex=' + IntToStr(FTimeline.IndexOf(FullHash)));
   I := FTimeline.IndexOf(FullHash);
   if I >= 0 then
   begin
@@ -954,10 +1279,8 @@ begin
       This keeps the horizontal commit slider, vertical time slider, and
       snapshot synchronized.  Time-driven navigation restores its requested
       time after this call. }
-    FSelectedUnixTime := CommitUnixTime(RepoEdit.Text, FCommitHash);
+    FSelectedCommitTime := CommitUnixTime(RepoEdit.Text, FCommitHash);
     UpdateVerticalTimeSlider;
-    GTMDebug('SelectCommitHash: selected FCommitHash=' + FCommitHash +
-      ' TagEdit=' + TagEdit.Text);
   end;
 end;
 
@@ -1018,7 +1341,6 @@ begin
   FMergeIndex := -1;
   FMergeHash := '';
   FBranchCommitCount := FBranchIndex.Count;
-  FReachableCommitCount := FBranchCommitCount;
   FAfterForkCount := 0;
 
   if (Trim(BranchEdit.Text) = '') or
@@ -1334,9 +1656,9 @@ begin
   StepNavigation(1);
 end;
 
-procedure TMainForm.TimePreviewTimerTimer(Sender: TObject);
+procedure TMainForm.VerticalPreviewTimerTimer(Sender: TObject);
 begin
-  FTimePreviewTimer.Enabled := False;
+  FVerticalPreviewTimer.Enabled := False;
   UpdateTimeCurrentLabel;
 end;
 
@@ -1345,11 +1667,11 @@ begin
   if FLoadingTimeline then
     Exit;
 
-  FPendingTimePosition := VerticalTimeTrackBar.Position;
-  FSelectedUnixTime := SliderToUnixTime(FPendingTimePosition);
+  FPendingVerticalPosition := VerticalTimeTrackBar.Position;
+  FSelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
 
-  FTimePreviewTimer.Enabled := False;
-  FTimePreviewTimer.Enabled := True;
+  FVerticalPreviewTimer.Enabled := False;
+  FVerticalPreviewTimer.Enabled := True;
 end;
 
 procedure TMainForm.VerticalTimeTrackBarMouseDown(Sender: TObject;
@@ -1358,8 +1680,8 @@ begin
   if Button <> mbLeft then
     Exit;
 
-  FDraggingTime := True;
-  FPendingTimePosition := VerticalTimeTrackBar.Position;
+  FDraggingVerticalSlider := True;
+  FPendingVerticalPosition := VerticalTimeTrackBar.Position;
 end;
 
 procedure TMainForm.VerticalTimeTrackBarMouseUp(Sender: TObject;
@@ -1368,30 +1690,30 @@ begin
   if Button <> mbLeft then
     Exit;
 
-  if not FDraggingTime then
+  if not FDraggingVerticalSlider then
     Exit;
 
-  FDraggingTime := False;
-  FPendingTimePosition := VerticalTimeTrackBar.Position;
-  FSelectedUnixTime := SliderToUnixTime(FPendingTimePosition);
+  FDraggingVerticalSlider := False;
+  FPendingVerticalPosition := VerticalTimeTrackBar.Position;
+  FSelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
 
-  FTimePreviewTimer.Enabled := False;
+  FVerticalPreviewTimer.Enabled := False;
   UpdateTimeCurrentLabel;
-  SelectTimePosition(FPendingTimePosition);
+  SelectTimePosition(FPendingVerticalPosition);
 end;
 
 procedure TMainForm.VerticalTimeTrackBarKeyUp(Sender: TObject;
   var Key: Word; Shift: TShiftState);
 begin
-  if FLoadingTimeline or FDraggingTime then
+  if FLoadingTimeline or FDraggingVerticalSlider then
     Exit;
 
-  FPendingTimePosition := VerticalTimeTrackBar.Position;
-  FSelectedUnixTime := SliderToUnixTime(FPendingTimePosition);
+  FPendingVerticalPosition := VerticalTimeTrackBar.Position;
+  FSelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
 
-  FTimePreviewTimer.Enabled := False;
+  FVerticalPreviewTimer.Enabled := False;
   UpdateTimeCurrentLabel;
-  SelectTimePosition(FPendingTimePosition);
+  SelectTimePosition(FPendingVerticalPosition);
 end;
 
 procedure TMainForm.TimeTrackBarMouseDown(Sender: TObject;
@@ -1400,7 +1722,7 @@ begin
   if Button <> mbLeft then
     Exit;
 
-  FDraggingTimeline := True;
+  FDraggingVerticalSliderline := True;
   FPendingTimelinePosition := TimeTrackBar.Position;
 end;
 
@@ -1412,10 +1734,10 @@ begin
   if Button <> mbLeft then
     Exit;
 
-  if not FDraggingTimeline then
+  if not FDraggingVerticalSliderline then
     Exit;
 
-  FDraggingTimeline := False;
+  FDraggingVerticalSliderline := False;
   FPendingTimelinePosition := TimeTrackBar.Position;
 
   CommitHash := ResolveSliderCommit(FPendingTimelinePosition);
@@ -1427,7 +1749,7 @@ procedure TMainForm.TimeTrackBarKeyUp(Sender: TObject;
 var
   CommitHash: string;
 begin
-  if FLoadingTimeline or FDraggingTimeline then
+  if FLoadingTimeline or FDraggingVerticalSliderline then
     Exit;
 
   FPendingTimelinePosition := TimeTrackBar.Position;

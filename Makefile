@@ -1,6 +1,8 @@
 FPC ?= fpc
 SRC := src/gtm.lpr
 BIN := bin/gtm
+GO ?= go
+MOUNT_BIN := bin/gtm-mount
 
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 VERSION_INC := bin/gtmversion.inc
@@ -10,7 +12,7 @@ SOURCE_DIR_NAME := $(notdir $(CURDIR))
 BASELINE_NAME := gtm-baseline-$(VERSION)
 BASELINE_ARCHIVE := $(DIST_PARENT)/$(BASELINE_NAME).tar.gz
 
-.PHONY: all cli gui clean baseline version
+.PHONY: all cli gui mount clean baseline version
 
 all: cli
 
@@ -25,6 +27,10 @@ cli: version
 gui: version
 	mkdir -p bin
 	lazbuild gui/gtm-gui.lpi
+
+mount:
+	mkdir -p bin
+	$(GO) build -o $(MOUNT_BIN) ./mount
 
 clean:
 	rm -rf bin

@@ -104,6 +104,25 @@ object MainForm: TMainForm
     Width = 180
     Caption = 'Snapshot: not loaded'
   end
+  object MountButton: TButton
+    Left = 1008
+    Height = 45
+    Top = 134
+    Width = 150
+    Caption = 'Mount Snapshot'
+    OnClick = MountButtonClick
+    TabOrder = 5
+  end
+  object MountsButton: TButton
+    Left = 1170
+    Height = 45
+    Top = 134
+    Width = 156
+    Caption = 'Mounts...'
+    OnClick = MountsButtonClick
+    TabOrder = 6
+  end
+
   object FirstButton: TButton
     Left = 24
     Height = 45
