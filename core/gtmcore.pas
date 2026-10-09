@@ -23,6 +23,8 @@ procedure BuildTimelineWindow(const Repo, BranchName, CenterCommit: string;
   WindowSize: Integer; Commits: TStrings; out OlderCommit: string;
   out HasNewer: Boolean);
 procedure ListBranches(const Repo: string; Branches: TStrings);
+procedure ListTags(const Repo: string; Tags: TStrings);
+function ResolveTagCommit(const Repo, TagName: string): string;
 function FindMergeBase(const Repo, BranchA, BranchB: string): string;
 function CountBranchCommits(const Repo, BranchName: string): Integer;
 function CountReachableCommits(const Repo, BranchName: string): Integer;
@@ -289,24 +291,179 @@ end;
 
 procedure BuildTimeline(const Repo, BranchName: string; Commits: TStrings);
 var
-  OutText, ErrText: string;
-  Code: Integer;
+  OutText, ErrText, S, CommitHash, TailHash, FirstParent: string;
+  Code, I, ParentCount: Integer;
+  Graph, BranchPath: TStringList;
+  Found: Boolean;
+
+  procedure ParseGraphLine(const Line: string; out ACommit, AFirstParent: string;
+    out AParentCount: Integer);
+  var
+    T, H: string;
+    Q: Integer;
+  begin
+    ACommit := '';
+    AFirstParent := '';
+    AParentCount := 0;
+    T := Trim(Line);
+    if T = '' then
+      Exit;
+
+    Q := Pos(' ', T);
+    if Q = 0 then
+    begin
+      ACommit := T;
+      Exit;
+    end;
+
+    ACommit := Copy(T, 1, Q - 1);
+    Delete(T, 1, Q);
+    T := Trim(T);
+
+    while T <> '' do
+    begin
+      Inc(AParentCount);
+      Q := Pos(' ', T);
+      if Q = 0 then
+      begin
+        H := T;
+        T := '';
+      end
+      else
+      begin
+        H := Copy(T, 1, Q - 1);
+        Delete(T, 1, Q);
+        T := Trim(T);
+      end;
+
+      if AParentCount = 1 then
+        AFirstParent := H;
+    end;
+  end;
+
+  function HasNonFirstParent(const Line, WantedParent: string): Boolean;
+  var
+    T, H: string;
+    Q, N: Integer;
+  begin
+    Result := False;
+    T := Trim(Line);
+    Q := Pos(' ', T);
+    if Q = 0 then
+      Exit;
+
+    Delete(T, 1, Q);
+    T := Trim(T);
+    N := 0;
+
+    while T <> '' do
+    begin
+      Inc(N);
+      Q := Pos(' ', T);
+      if Q = 0 then
+      begin
+        H := T;
+        T := '';
+      end
+      else
+      begin
+        H := Copy(T, 1, Q - 1);
+        Delete(T, 1, Q);
+        T := Trim(T);
+      end;
+
+      if (N > 1) and SameText(H, WantedParent) then
+        Exit(True);
+    end;
+  end;
+
 begin
   if Commits = nil then
     Exit;
 
   Commits.Clear;
+  BranchPath := TStringList.Create;
+  Graph := TStringList.Create;
+  try
+    { First build the selected branch's own history.  First-parent traversal
+      keeps merges on the selected line from importing the other side. }
+    if not RunGit(Repo,
+      ['rev-list', '--first-parent', '--reverse', BranchName],
+      OutText, ErrText, Code) then
+      Die('unable to execute git: ' + ErrText);
 
-  if not RunGit(Repo,
-    ['rev-list', '--reverse', BranchName],
-    OutText, ErrText, Code) then
-    Die('unable to execute git: ' + ErrText);
+    if Code <> 0 then
+      Die(Trim(ErrText));
 
-  if Code <> 0 then
-    Die(Trim(ErrText));
+    BranchPath.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+    while (BranchPath.Count > 0) and
+          (Trim(BranchPath[BranchPath.Count - 1]) = '') do
+      BranchPath.Delete(BranchPath.Count - 1);
 
-  Commits.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+    if BranchPath.Count = 0 then
+      Exit;
+
+    { A branch ref may stop at its old tip even though that path later rejoined
+      another line.  Find the merge whose non-first parent is the selected
+      branch tip, append the merge, then walk the continuation forward by
+      following commits whose first parent is the current tail.
+
+      The resulting TStringList is the path.  Forward and reverse navigation
+      both index this same list, so reversing through a merge returns down the
+      branch that was selected rather than switching to the merge's first
+      parent. }
+    if not RunGit(Repo,
+      ['rev-list', '--all', '--parents', '--topo-order', '--reverse'],
+      OutText, ErrText, Code) then
+      Die('unable to execute git: ' + ErrText);
+
+    if Code <> 0 then
+      Die(Trim(ErrText));
+
+    Graph.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+    TailHash := Trim(BranchPath[BranchPath.Count - 1]);
+
+    Found := False;
+    for I := 0 to Graph.Count - 1 do
+    begin
+      S := Trim(Graph[I]);
+      ParseGraphLine(S, CommitHash, FirstParent, ParentCount);
+      if (CommitHash <> '') and (ParentCount > 1) and
+         HasNonFirstParent(S, TailHash) then
+      begin
+        BranchPath.Add(CommitHash);
+        TailHash := CommitHash;
+        Found := True;
+        Break;
+      end;
+    end;
+
+    if Found then
+    begin
+      repeat
+        Found := False;
+        for I := 0 to Graph.Count - 1 do
+        begin
+          ParseGraphLine(Graph[I], CommitHash, FirstParent, ParentCount);
+          if (CommitHash <> '') and SameText(FirstParent, TailHash) and
+             (BranchPath.IndexOf(CommitHash) < 0) then
+          begin
+            BranchPath.Add(CommitHash);
+            TailHash := CommitHash;
+            Found := True;
+            Break;
+          end;
+        end;
+      until not Found;
+    end;
+
+    Commits.Assign(BranchPath);
+  finally
+    Graph.Free;
+    BranchPath.Free;
+  end;
 end;
+
 
 procedure BuildTimelineWindow(const Repo, BranchName, CenterCommit: string;
   WindowSize: Integer; Commits: TStrings; out OlderCommit: string;
@@ -451,6 +608,62 @@ begin
     Lines.Free;
   end;
 end;
+
+
+procedure ListTags(const Repo: string; Tags: TStrings);
+var
+  OutText, ErrText: string;
+  Code, I: Integer;
+  Lines: TStringList;
+  S: string;
+begin
+  if Tags = nil then
+    Exit;
+
+  Tags.Clear;
+
+  if not RunGit(Repo,
+    ['tag', '--list', '--sort=refname'],
+    OutText, ErrText, Code) then
+    Die('unable to execute git: ' + ErrText);
+
+  if Code <> 0 then
+    Die(Trim(ErrText));
+
+  Lines := TStringList.Create;
+  try
+    Lines.Text := StringReplace(OutText, #13, '', [rfReplaceAll]);
+    for I := 0 to Lines.Count - 1 do
+    begin
+      S := Trim(Lines[I]);
+      if S <> '' then
+        Tags.Add(S);
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+function ResolveTagCommit(const Repo, TagName: string): string;
+var
+  OutText, ErrText: string;
+  Code: Integer;
+begin
+  Result := '';
+
+  if Trim(TagName) = '' then
+    Exit;
+
+  { ^{commit} peels annotated tags and also verifies that the final target
+    is a commit.  Lightweight tags resolve directly. }
+  if not RunGit(Repo, ['rev-parse', TagName + '^{commit}'],
+    OutText, ErrText, Code) then
+    Exit;
+
+  if Code = 0 then
+    Result := CleanLine(OutText);
+end;
+
 
 function FindMergeBase(const Repo, BranchA, BranchB: string): string;
 var

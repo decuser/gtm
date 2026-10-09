@@ -6,16 +6,22 @@ interface
 
 uses
   Classes, SysUtils, DateUtils, Forms, Controls, StdCtrls, Dialogs, ComCtrls, LCLIntf,
+  LCLType,
   Graphics, Menus, Process, ExtCtrls, gtmcore;
 
 type
   TMainForm = class(TForm)
     BranchEdit: TComboBox;
+    TagEdit: TEdit;
+    TagButton: TButton;
+    TagLabel: TLabel;
     BranchLabel: TLabel;
     CommitInfoLabel: TLabel;
     CompareLabel: TLabel;
     ScaleLabel: TLabel;
     ForkLabel: TLabel;
+    ForkMarkerLabel: TLabel;
+    MergeMarkerLabel: TLabel;
     FilePopup: TPopupMenu;
     OpenMenuItem: TMenuItem;
     SaveAsMenuItem: TMenuItem;
@@ -42,8 +48,12 @@ type
     SelectDirectoryDialog1: TSelectDirectoryDialog;
     procedure BrowseButtonClick(Sender: TObject);
     procedure BranchEditChange(Sender: TObject);
+    procedure TagButtonClick(Sender: TObject);
+    procedure TagChooserAccept(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
+    procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure FormKeyUp(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure FirstButtonClick(Sender: TObject);
     procedure NextButtonClick(Sender: TObject);
     procedure LastButtonClick(Sender: TObject);
@@ -86,13 +96,20 @@ type
     FCurrentPath: string;
     FTimeline: TStringList;
     FBranchIndex: TStringList;
+    FTagCommits: TStringList;
+    FTagNames: TStringList;
     FEntryStates: TStringList;
     FDeletedEntries: TStringList;
     FPreviousCommitHash: string;
     FLoadingTimeline: Boolean;
     FLoadingBranches: Boolean;
+    FLoadingTags: Boolean;
+    FTagChooser: TForm;
+    FTagChooserList: TListBox;
     FForkIndex: Integer;
     FForkHash: string;
+    FMergeIndex: Integer;
+    FMergeHash: string;
     FWindowSize: Integer;
     FWindowPredecessor: string;
     FHasNewer: Boolean;
@@ -104,6 +121,7 @@ type
     FNavDirection: Integer;
     FNavHoldTicks: Integer;
     FNavRepeated: Boolean;
+    FNavKey: Word;
     FDraggingTimeline: Boolean;
     FPendingTimelinePosition: Integer;
     FDraggingTime: Boolean;
@@ -124,6 +142,8 @@ type
     procedure BuildBranchIndex;
     procedure BuildBranchTimeline(const CenterCommit: string);
     procedure PopulateBranches;
+    procedure PopulateTags;
+    procedure UpdateTagSelection;
     procedure SwitchBranch;
     procedure EnsureCurrentPathExists;
     procedure SelectTimelineIndex(Index: Integer);
@@ -164,15 +184,26 @@ implementation
 
 {$R *.lfm}
 
+procedure GTMDebug(const S: string);
+begin
+  WriteLn(StdErr, '[gtm-debug] ', S);
+end;
+
+
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
   FTimeline := TStringList.Create;
   FBranchIndex := TStringList.Create;
+  FTagCommits := TStringList.Create;
+  FTagNames := TStringList.Create;
   FEntryStates := TStringList.Create;
   FDeletedEntries := TStringList.Create;
   FPreviousCommitHash := '';
+  FMergeIndex := -1;
+  FMergeHash := '';
   FLoadingTimeline := False;
   FLoadingBranches := False;
+  FLoadingTags := False;
   FForkIndex := -1;
   FForkHash := '';
   FWindowSize := 100;
@@ -184,6 +215,7 @@ begin
   FNavDirection := 0;
   FNavHoldTicks := 0;
   FNavRepeated := False;
+  FNavKey := 0;
   FDraggingTimeline := False;
   FPendingTimelinePosition := 0;
   FDraggingTime := False;
@@ -203,6 +235,10 @@ begin
   FTimePreviewTimer.Interval := 350;
   FTimePreviewTimer.OnTimer := @TimePreviewTimerTimer;
   BranchEdit.Items.Clear;
+  TagEdit.Text := '(none)';
+  TagEdit.ReadOnly := True;
+  FTagChooser := nil;
+  FTagChooserList := nil;
   ForkLabel.Caption := '';
   ScaleLabel.Caption := '';
   TimeNowLabel.Caption := 'Now';
@@ -232,6 +268,8 @@ procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   FDeletedEntries.Free;
   FEntryStates.Free;
+  FTagNames.Free;
+  FTagCommits.Free;
   FBranchIndex.Free;
   FTimeline.Free;
 end;
@@ -300,35 +338,253 @@ begin
   end;
 end;
 
+
+procedure TMainForm.PopulateTags;
+var
+  Tags, Reachable, CandidatePath: TStringList;
+  TagName, CommitHash, BranchName: string;
+  I, J: Integer;
+begin
+  FLoadingTags := True;
+  try
+    FTagNames.Clear;
+    FTagCommits.Clear;
+    FTagNames.Add('(none)');
+    FTagCommits.Add('');
+    TagEdit.Text := '(none)';
+
+    if Trim(RepoEdit.Text) = '' then
+      Exit;
+
+    Tags := TStringList.Create;
+    Reachable := TStringList.Create;
+    CandidatePath := TStringList.Create;
+    try
+      { Tags are browsable only when their commit lies on at least one
+        actual GTM branch path.  Build that reachable set once. }
+      Reachable.Sorted := True;
+      Reachable.Duplicates := dupIgnore;
+
+      for I := 0 to BranchEdit.Items.Count - 1 do
+      begin
+        BranchName := Trim(BranchEdit.Items[I]);
+        if BranchName = '' then
+          Continue;
+
+        BuildTimeline(RepoEdit.Text, BranchName, CandidatePath);
+        for J := 0 to CandidatePath.Count - 1 do
+          Reachable.Add(Trim(CandidatePath[J]));
+      end;
+
+      ListTags(RepoEdit.Text, Tags);
+      for I := Tags.Count - 1 downto 0 do
+      begin
+        TagName := Trim(Tags[I]);
+        CommitHash := ResolveTagCommit(RepoEdit.Text, TagName);
+        if (CommitHash <> '') and (Reachable.IndexOf(CommitHash) >= 0) then
+        begin
+          FTagNames.Add(TagName);
+          FTagCommits.Add(CommitHash);
+        end;
+      end;
+    finally
+      CandidatePath.Free;
+      Reachable.Free;
+      Tags.Free;
+    end;
+  finally
+    FLoadingTags := False;
+  end;
+end;
+
+procedure TMainForm.UpdateTagSelection;
+var
+  I: Integer;
+begin
+  GTMDebug('UpdateTagSelection: FCommitHash=' + FCommitHash);
+  TagEdit.Text := '(none)';
+
+  if FCommitHash = '' then
+  begin
+    GTMDebug('UpdateTagSelection: empty commit -> (none)');
+    Exit;
+  end;
+
+  for I := 1 to FTagCommits.Count - 1 do
+    if SameText(FTagCommits[I], FCommitHash) then
+    begin
+      TagEdit.Text := FTagNames[I];
+      GTMDebug('UpdateTagSelection: matched tag "' + FTagNames[I] +
+        '" at index ' + IntToStr(I));
+      Exit;
+    end;
+
+  GTMDebug('UpdateTagSelection: no matching tag -> (none)');
+end;
+
+procedure TMainForm.TagChooserAccept(Sender: TObject);
+begin
+  if (FTagChooser <> nil) and (FTagChooserList <> nil) then
+  begin
+    GTMDebug('TagChooserAccept: ItemIndex=' +
+      IntToStr(FTagChooserList.ItemIndex));
+    if FTagChooserList.ItemIndex > 0 then
+      FTagChooser.ModalResult := mrOk;
+  end;
+end;
+
+procedure TMainForm.TagButtonClick(Sender: TObject);
+var
+  Chooser: TForm;
+  List: TListBox;
+  ButtonPanel: TPanel;
+  SelectButton, CancelButton: TButton;
+  SelectedIndex, BranchIndex: Integer;
+  TargetCommit: string;
+  CandidatePath: TStringList;
+  FoundBranch: Boolean;
+begin
+  Chooser := TForm.Create(Self);
+  try
+    Chooser.Caption := 'Select Tag';
+    Chooser.Position := poMainFormCenter;
+    Chooser.BorderStyle := bsSizeToolWin;
+    Chooser.ClientWidth := 420;
+    Chooser.ClientHeight := 360;
+
+    ButtonPanel := TPanel.Create(Chooser);
+    ButtonPanel.Parent := Chooser;
+    ButtonPanel.Align := alBottom;
+    ButtonPanel.Height := 52;
+    ButtonPanel.BevelOuter := bvNone;
+
+    SelectButton := TButton.Create(ButtonPanel);
+    SelectButton.Parent := ButtonPanel;
+    SelectButton.Caption := 'Select';
+    SelectButton.Default := True;
+    SelectButton.Left := 220;
+    SelectButton.Top := 10;
+    SelectButton.Width := 90;
+    SelectButton.OnClick := @TagChooserAccept;
+
+    CancelButton := TButton.Create(ButtonPanel);
+    CancelButton.Parent := ButtonPanel;
+    CancelButton.Caption := 'Cancel';
+    CancelButton.ModalResult := mrCancel;
+    CancelButton.Cancel := True;
+    CancelButton.Left := 316;
+    CancelButton.Top := 10;
+    CancelButton.Width := 90;
+
+    List := TListBox.Create(Chooser);
+    List.Parent := Chooser;
+    List.Align := alClient;
+    List.Items.Assign(FTagNames);
+    List.ItemHeight := 24;
+    List.ItemIndex := 0;
+    List.OnDblClick := @TagChooserAccept;
+
+    FTagChooser := Chooser;
+    FTagChooserList := List;
+    try
+      if Chooser.ShowModal <> mrOk then
+        Exit;
+    finally
+      FTagChooserList := nil;
+      FTagChooser := nil;
+    end;
+
+    SelectedIndex := List.ItemIndex;
+    GTMDebug('TagButtonClick: selected index=' + IntToStr(SelectedIndex));
+    if (SelectedIndex <= 0) or (SelectedIndex >= FTagCommits.Count) then
+      Exit;
+
+    TargetCommit := FTagCommits[SelectedIndex];
+    GTMDebug('TagButtonClick: tag="' + FTagNames[SelectedIndex] +
+      '" target=' + TargetCommit);
+
+    FoundBranch := FBranchIndex.IndexOf(TargetCommit) >= 0;
+
+    if not FoundBranch then
+    begin
+      CandidatePath := TStringList.Create;
+      try
+        for BranchIndex := 0 to BranchEdit.Items.Count - 1 do
+        begin
+          BuildTimeline(
+            RepoEdit.Text,
+            BranchEdit.Items[BranchIndex],
+            CandidatePath
+          );
+
+          if CandidatePath.IndexOf(TargetCommit) >= 0 then
+          begin
+            FLoadingBranches := True;
+            try
+              BranchEdit.ItemIndex := BranchIndex;
+            finally
+              FLoadingBranches := False;
+            end;
+
+            FBranchIndex.Assign(CandidatePath);
+            FBranchCommitCount := FBranchIndex.Count;
+            FReachableCommitCount := FBranchCommitCount;
+            FoundBranch := True;
+            Break;
+          end;
+        end;
+      finally
+        CandidatePath.Free;
+      end;
+    end;
+
+    { PopulateTags filters unreachable tags.  This guard only handles the
+      repository changing after the chooser was populated. }
+    if not FoundBranch then
+    begin
+      PopulateTags;
+      Exit;
+    end;
+
+    FPreviousCommitHash := '';
+    BuildBranchTimeline(TargetCommit);
+    FCommitHash := '';
+    SelectCommitHash(TargetCommit);
+    UpdateTagSelection;
+  finally
+    FTagChooserList := nil;
+    FTagChooser := nil;
+    Chooser.Free;
+  end;
+end;
+
 procedure TMainForm.SwitchBranch;
 var
   TargetCommit: string;
-  I: Integer;
 begin
   if Trim(RepoEdit.Text) = '' then
     Exit;
   if Trim(BranchEdit.Text) = '' then
     Exit;
-  if Trim(TimeEdit.Text) = '' then
-    TimeEdit.Text := CurrentLocalTimeForGit;
 
   Screen.Cursor := crHourGlass;
   try
-    TargetCommit := ResolveCommit(
-      RepoEdit.Text,
-      BranchEdit.Text,
-      TimeEdit.Text
-    );
-
     FPreviousCommitHash := '';
+    FBranchIndex.Clear;
+    BuildBranchIndex;
+
+    if FBranchIndex.Count = 0 then
+      Exit;
+
+    { Selecting a branch selects its GTM path and lands at the latest point
+      on that path.  A rejoined branch therefore lands on the shared
+      continuation, not on the old raw Git branch ref. }
+    TargetCommit := FBranchIndex[FBranchIndex.Count - 1];
+
     BuildBranchTimeline(TargetCommit);
 
-    I := FTimeline.IndexOf(TargetCommit);
-    if I >= 0 then
-    begin
-      FCommitHash := '';
-      SelectTimelineIndex(I);
-    end;
+    FCommitHash := '';
+    SelectCommitHash(TargetCommit);
   finally
     Screen.Cursor := crDefault;
   end;
@@ -368,6 +624,7 @@ begin
     FCurrentPath := '';
     FPreviousCommitHash := '';
     BuildBranchTimeline(TargetCommit);
+    PopulateTags;
 
     I := FTimeline.IndexOf(TargetCommit);
     if I >= 0 then
@@ -664,6 +921,7 @@ var
   I, J: Integer;
   FullHash: string;
 begin
+  GTMDebug('SelectCommitHash: requested=' + CommitHash);
   if CommitHash = '' then
     Exit;
 
@@ -684,6 +942,9 @@ begin
   if FTimeline.IndexOf(FullHash) < 0 then
     BuildBranchTimeline(FullHash);
 
+  GTMDebug('SelectCommitHash: full=' + FullHash +
+    ' branchIndex=' + IntToStr(FBranchIndex.IndexOf(FullHash)) +
+    ' timelineIndex=' + IntToStr(FTimeline.IndexOf(FullHash)));
   I := FTimeline.IndexOf(FullHash);
   if I >= 0 then
   begin
@@ -695,6 +956,8 @@ begin
       time after this call. }
     FSelectedUnixTime := CommitUnixTime(RepoEdit.Text, FCommitHash);
     UpdateVerticalTimeSlider;
+    GTMDebug('SelectCommitHash: selected FCommitHash=' + FCommitHash +
+      ' TagEdit=' + TagEdit.Text);
   end;
 end;
 
@@ -742,12 +1005,18 @@ begin
   BuildEntryStates(PredecessorCommit(FCommitHash), FCommitHash);
   LoadCurrentDirectory;
   UpdateTimelineControls;
+  UpdateTagSelection;
 end;
 
 procedure TMainForm.UpdateForkInfo;
+var
+  RefTip: string;
+  RefTipIndex: Integer;
 begin
   FForkIndex := -1;
   FForkHash := '';
+  FMergeIndex := -1;
+  FMergeHash := '';
   FBranchCommitCount := FBranchIndex.Count;
   FReachableCommitCount := FBranchCommitCount;
   FAfterForkCount := 0;
@@ -766,44 +1035,45 @@ begin
   );
 
   if FForkHash <> '' then
-  begin
     FForkIndex := FBranchIndex.IndexOf(FForkHash);
-    FAfterForkCount := CountCommitsAfter(
-      RepoEdit.Text,
-      FForkHash,
-      BranchEdit.Text
-    );
+
+  { BuildTimeline already contains the selected branch's complete ordered
+    path.  If the branch ref tip is not the end of that path, the next commit
+    is the merge where the branch rejoins the continuation. }
+  RefTip := BranchTip(RepoEdit.Text, BranchEdit.Text);
+  RefTipIndex := FBranchIndex.IndexOf(RefTip);
+
+  if (RefTipIndex >= 0) and
+     (RefTipIndex < FBranchIndex.Count - 1) then
+  begin
+    FMergeIndex := RefTipIndex + 1;
+    FMergeHash := FBranchIndex[FMergeIndex];
+  end;
+
+  if FForkIndex >= 0 then
+  begin
+    if FMergeIndex > FForkIndex then
+      FAfterForkCount := FMergeIndex - FForkIndex - 1
+    else
+      FAfterForkCount := FBranchIndex.Count - FForkIndex - 1;
   end;
 end;
 
 
 procedure TMainForm.UpdateTimelineLabels;
 var
-  CurrentIndex, PixelRange, X: Integer;
+  CurrentIndex, PixelRange, ForkX, MergeX: Integer;
   WindowStartPos, WindowEndPos: Integer;
 begin
+  ForkLabel.Caption := '';
+  ForkMarkerLabel.Caption := '';
+  MergeMarkerLabel.Caption := '';
+
   if FTimeline.Count = 0 then
   begin
-    ForkLabel.Caption := '';
     ScaleLabel.Caption := '';
     Exit;
   end;
-
-
-
-  PixelRange := TimeTrackBar.Width;
-  if FBranchCommitCount > 1 then
-    X := TimeTrackBar.Left +
-      Round(FCurrentBranchPosition * PixelRange /
-        (FBranchCommitCount - 1))
-  else
-    X := TimeTrackBar.Left;
-
-
-  if FForkHash <> '' then
-    ForkLabel.Caption := '^ fork ' + Copy(FForkHash, 1, 8)
-  else
-    ForkLabel.Caption := '';
 
   CurrentIndex := FTimeline.IndexOf(FCommitHash);
   if CurrentIndex < 0 then
@@ -818,8 +1088,56 @@ begin
     IntToStr(FBranchCommitCount);
 
   if FForkHash <> '' then
-    ScaleLabel.Caption := ScaleLabel.Caption + ' · ' +
-      IntToStr(FAfterForkCount) + ' after fork';
+  begin
+    if FMergeHash <> '' then
+      ScaleLabel.Caption := ScaleLabel.Caption +
+        ' · fork ' + Copy(FForkHash, 1, 8) +
+        ' -> merge ' + Copy(FMergeHash, 1, 8) +
+        ' -> continues'
+    else
+      ScaleLabel.Caption := ScaleLabel.Caption +
+        ' · fork ' + Copy(FForkHash, 1, 8) +
+        ' · unmerged';
+  end;
+
+  if FBranchCommitCount > 1 then
+  begin
+    PixelRange := TimeTrackBar.Width;
+
+    { Fork and merge annotations live below the slider. }
+    if FForkIndex >= 0 then
+    begin
+      ForkX := TimeTrackBar.Left +
+        Round(FForkIndex * PixelRange / (FBranchCommitCount - 1));
+      ForkMarkerLabel.AutoSize := False;
+      ForkMarkerLabel.Width := 18;
+      ForkMarkerLabel.Height := 18;
+      ForkMarkerLabel.Alignment := taCenter;
+      ForkMarkerLabel.Layout := tlCenter;
+      ForkMarkerLabel.Caption := 'F';
+      ForkMarkerLabel.Left := ForkX - 9;
+      ForkMarkerLabel.Top := TimeTrackBar.Top + TimeTrackBar.Height - 2;
+      ForkMarkerLabel.Hint := '';
+      ForkMarkerLabel.ShowHint := False;
+    end;
+
+    if FMergeIndex >= 0 then
+    begin
+      MergeX := TimeTrackBar.Left +
+        Round(FMergeIndex * PixelRange / (FBranchCommitCount - 1));
+      MergeMarkerLabel.AutoSize := False;
+      MergeMarkerLabel.Width := 18;
+      MergeMarkerLabel.Height := 18;
+      MergeMarkerLabel.Alignment := taCenter;
+      MergeMarkerLabel.Layout := tlCenter;
+      MergeMarkerLabel.Caption := 'M';
+      MergeMarkerLabel.Left := MergeX - 9;
+      MergeMarkerLabel.Top := TimeTrackBar.Top + TimeTrackBar.Height - 2;
+      MergeMarkerLabel.Hint := '';
+      MergeMarkerLabel.ShowHint := False;
+    end;
+  end;
+
 end;
 
 
@@ -870,6 +1188,7 @@ begin
 
   FNavHoldTicks := 0;
   FNavRepeated := False;
+  FNavKey := 0;
   FNavTimer.Enabled := True;
 end;
 
@@ -882,6 +1201,7 @@ begin
   FNavTimer.Enabled := False;
   FNavDirection := 0;
   FNavHoldTicks := 0;
+  FNavKey := 0;
 end;
 
 procedure TMainForm.NavTimerTimer(Sender: TObject);
@@ -916,6 +1236,79 @@ begin
   end;
 
   StepNavigation(-1);
+end;
+
+procedure TMainForm.FormKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+var
+  Direction: Integer;
+begin
+  Direction := 0;
+
+  case Key of
+    VK_LEFT, VK_DOWN:
+      Direction := -1;
+    VK_RIGHT, VK_UP:
+      Direction := 1;
+  else
+    Exit;
+  end;
+
+  { Ctrl+arrow means endpoint on the selected branch path. }
+  if ssCtrl in Shift then
+  begin
+    FNavTimer.Enabled := False;
+    FNavDirection := 0;
+    FNavHoldTicks := 0;
+    FNavKey := 0;
+
+    if FBranchIndex.Count > 0 then
+    begin
+      if Direction < 0 then
+        SelectCommitHash(FBranchIndex[0])
+      else
+        SelectCommitHash(FBranchIndex[FBranchIndex.Count - 1]);
+    end;
+
+    Key := 0;
+    Exit;
+  end;
+
+  { The OS may send repeated KeyDown events while a key is held.  Ignore
+    those and let the same timer used by the mouse navigation buttons do
+    the accelerating repeat. }
+  if (FNavKey = Key) and (FNavDirection = Direction) then
+  begin
+    Key := 0;
+    Exit;
+  end;
+
+  FNavTimer.Enabled := False;
+  FNavKey := Key;
+  FNavDirection := Direction;
+  FNavHoldTicks := 0;
+  FNavRepeated := False;
+
+  StepNavigation(Direction);
+  FNavTimer.Enabled := True;
+
+  Key := 0;
+end;
+
+procedure TMainForm.FormKeyUp(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  if (Key <> VK_LEFT) and (Key <> VK_RIGHT) and
+     (Key <> VK_UP) and (Key <> VK_DOWN) then
+    Exit;
+
+  FNavTimer.Enabled := False;
+  FNavDirection := 0;
+  FNavHoldTicks := 0;
+  FNavRepeated := False;
+  FNavKey := 0;
+
+  Key := 0;
 end;
 
 procedure TMainForm.FirstButtonClick(Sender: TObject);

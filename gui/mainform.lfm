@@ -8,9 +8,12 @@ object MainForm: TMainForm
   ClientWidth = 1356
   DesignTimePPI = 144
   Position = poScreenCenter
+  KeyPreview = True
   LCLVersion = '4.8.0.0'
   OnCreate = FormCreate
   OnDestroy = FormDestroy
+  OnKeyDown = FormKeyDown
+  OnKeyUp = FormKeyUp
   object RepoLabel: TLabel
     Left = 24
     Height = 26
@@ -48,24 +51,51 @@ object MainForm: TMainForm
     Height = 42
     Top = 82
     Width = 270
+    DropDownCount = 12
     ItemHeight = 0
     Style = csDropDownList
     TabOrder = 2
     OnChange = BranchEditChange
   end
+  object TagLabel: TLabel
+    Left = 438
+    Height = 26
+    Top = 90
+    Width = 30
+    Caption = 'Tag'
+  end
+  object TagEdit: TEdit
+    Left = 480
+    Height = 43
+    Top = 82
+    Width = 210
+    ReadOnly = True
+    TabOrder = 3
+    Text = '(none)'
+  end
+  object TagButton: TButton
+    Left = 696
+    Height = 43
+    Top = 82
+    Width = 36
+    Caption = '▼'
+    TabOrder = 4
+    OnClick = TagButtonClick
+  end
   object TimeLabel: TLabel
-    Left = 456
+    Left = 756
     Height = 26
     Top = 90
     Width = 42
     Caption = 'Time'
   end
   object TimeEdit: TEdit
-    Left = 516
+    Left = 816
     Height = 43
     Top = 82
-    Width = 540
-    TabOrder = 3
+    Width = 324
+    Anchors = [akTop, akLeft, akRight]
+    TabOrder = 4
   end
   object SnapshotLabel: TLabel
     Left = 24
@@ -80,7 +110,7 @@ object MainForm: TMainForm
     Top = 184
     Width = 54
     Caption = '|<'
-    TabOrder = 4
+    TabOrder = 6
     OnClick = FirstButtonClick
   end
   object PrevButton: TButton
@@ -89,7 +119,7 @@ object MainForm: TMainForm
     Top = 184
     Width = 54
     Caption = '<'
-    TabOrder = 5
+    TabOrder = 7
     OnClick = PrevButtonClick
     OnMouseDown = NavButtonMouseDown
     OnMouseUp = NavButtonMouseUp
@@ -104,10 +134,34 @@ object MainForm: TMainForm
     TickStyle = tsNone
     OnChange = TimeTrackBarChange
     Anchors = [akTop, akLeft, akRight]
-    TabOrder = 6
+    TabOrder = 8
     OnMouseDown = TimeTrackBarMouseDown
     OnMouseUp = TimeTrackBarMouseUp
     OnKeyUp = TimeTrackBarKeyUp
+  end
+  object ForkMarkerLabel: TLabel
+    Left = 150
+    Height = 18
+    Top = 230
+    Width = 18
+    AutoSize = False
+    Alignment = taCenter
+    Layout = tlCenter
+    Caption = ''
+    ShowHint = False
+    Transparent = True
+  end
+  object MergeMarkerLabel: TLabel
+    Left = 150
+    Height = 18
+    Top = 230
+    Width = 18
+    AutoSize = False
+    Alignment = taCenter
+    Layout = tlCenter
+    Caption = ''
+    ShowHint = False
+    Transparent = True
   end
   object NextButton: TButton
     Left = 1212
@@ -116,7 +170,7 @@ object MainForm: TMainForm
     Width = 54
     Anchors = [akTop, akRight]
     Caption = '>'
-    TabOrder = 7
+    TabOrder = 9
     OnClick = NextButtonClick
     OnMouseDown = NavButtonMouseDown
     OnMouseUp = NavButtonMouseUp
@@ -128,7 +182,7 @@ object MainForm: TMainForm
     Width = 54
     Anchors = [akTop, akRight]
     Caption = '>|'
-    TabOrder = 10
+    TabOrder = 12
     OnClick = LastButtonClick
   end
   object ForkLabel: TLabel
@@ -173,7 +227,7 @@ object MainForm: TMainForm
     ItemHeight = 30
     PopupMenu = FilePopup
     Style = lbOwnerDrawFixed
-    TabOrder = 8
+    TabOrder = 10
     TopIndex = -1
     OnDblClick = TreeListDblClick
     OnDrawItem = TreeListDrawItem
@@ -189,7 +243,7 @@ object MainForm: TMainForm
     TickStyle = tsNone
     OnChange = VerticalTimeTrackBarChange
     Anchors = [akTop, akRight, akBottom]
-    TabOrder = 9
+    TabOrder = 11
     OnMouseDown = VerticalTimeTrackBarMouseDown
     OnMouseUp = VerticalTimeTrackBarMouseUp
     OnKeyUp = VerticalTimeTrackBarKeyUp
