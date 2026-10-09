@@ -55,13 +55,15 @@ function RunGit(const Repo: string; const Args: array of string;
   out OutputText, ErrorText: string; out ExitCode: Integer): Boolean;
 const
   BufferSize = 8192;
+type
+  TReadBuffer = array[0..BufferSize - 1] of Byte;
 var
   P: TProcess;
   SSOut, SSErr: TStringStream;
-  Buffer: array[0..BufferSize - 1] of Byte;
+  Buffer: TReadBuffer;
   I, N: Integer;
 begin
-  FillChar(Buffer, SizeOf(Buffer), 0);
+  Buffer := Default(TReadBuffer);
 
   P := TProcess.Create(nil);
   SSOut := TStringStream.Create('');

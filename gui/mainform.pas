@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, DateUtils, Forms, Controls, StdCtrls, Buttons, Dialogs, ComCtrls, LCLIntf,
   LCLType,
-  Graphics, Menus, ExtCtrls, gtmcore, gtmmount, gtmexec;
+  Graphics, Menus, ExtCtrls, gtmcore, gtmmount, gtmexec, gtmstate;
 
 type
   TMainForm = class(TForm)
@@ -126,28 +126,11 @@ type
     procedure HistoryJumpMenuItemClick(Sender: TObject);
     procedure HistoryVisualDiffMenuItemClick(Sender: TObject);
   private
-    FCommitHash: string;
-    FCurrentPath: string;
-    FTimeline: TStringList;
-    FBranchIndex: TStringList;
-    FTagCommits: TStringList;
-    FTagNames: TStringList;
-    FEntryStates: TStringList;
-    FDeletedEntries: TStringList;
-    FPreviousCommitHash: string;
+    FState: TGTMState;
     FLoadingTimeline: Boolean;
     FLoadingBranches: Boolean;
     FTagChooser: TForm;
     FTagChooserList: TListBox;
-    FForkIndex: Integer;
-    FForkHash: string;
-    FMergeIndex: Integer;
-    FMergeHash: string;
-    FWindowSize: Integer;
-    FWindowPredecessor: string;
-    FBranchCommitCount: Integer;
-    FAfterForkCount: Integer;
-    FCurrentBranchPosition: Integer;
     FNavTimer: TTimer;
     FNavDirection: Integer;
     FNavHoldTicks: Integer;
@@ -157,10 +140,7 @@ type
     FPendingTimelinePosition: Integer;
     FDraggingVerticalSlider: Boolean;
     FPendingVerticalPosition: Integer;
-    FOldestCommitTime: Int64;
-    FNewestCommitTime: Int64;
     FVerticalPreviewTimer: TTimer;
-    FSelectedCommitTime: Int64;
     FHistoryList: TListBox;
     FHistoryPath: string;
     FHistorySelectionUpdating: Boolean;
@@ -251,12 +231,12 @@ var
   HasSnapshot, Mounted: Boolean;
 begin
   HasSnapshot :=
-    (Trim(RepoEdit.Text) <> '') and (Trim(FCommitHash) <> '');
+    (Trim(RepoEdit.Text) <> '') and (Trim(FState.CommitHash) <> '');
 
   Mounted :=
     (FMounts <> nil) and
     HasSnapshot and
-    FMounts.IsMounted(RepoEdit.Text, FCommitHash);
+    FMounts.IsMounted(RepoEdit.Text, FState.CommitHash);
 
   SnapshotMountButton.Enabled := HasSnapshot and (not Mounted);
   SnapshotUnmountButton.Enabled := HasSnapshot and Mounted;
@@ -266,10 +246,10 @@ end;
 
 procedure TMainForm.SnapshotMountButtonClick(Sender: TObject);
 begin
-  if (Trim(RepoEdit.Text) = '') or (Trim(FCommitHash) = '') then
+  if (Trim(RepoEdit.Text) = '') or (Trim(FState.CommitHash) = '') then
     Exit;
 
-  if not FMounts.IsMounted(RepoEdit.Text, FCommitHash) then
+  if not FMounts.IsMounted(RepoEdit.Text, FState.CommitHash) then
     MountCurrentSnapshot;
 end;
 
@@ -278,12 +258,12 @@ procedure TMainForm.SnapshotUnmountButtonClick(Sender: TObject);
 var
   ErrorMessage: string;
 begin
-  if (Trim(RepoEdit.Text) = '') or (Trim(FCommitHash) = '') then
+  if (Trim(RepoEdit.Text) = '') or (Trim(FState.CommitHash) = '') then
     Exit;
 
   if not FMounts.UnmountSnapshot(
     RepoEdit.Text,
-    FCommitHash,
+    FState.CommitHash,
     ErrorMessage
   ) then
   begin
@@ -306,7 +286,7 @@ procedure TMainForm.MountCurrentSnapshot;
 var
   MountPoint, ErrorMessage: string;
 begin
-  if (Trim(RepoEdit.Text) = '') or (Trim(FCommitHash) = '') then
+  if (Trim(RepoEdit.Text) = '') or (Trim(FState.CommitHash) = '') then
   begin
     ShowMessage('No snapshot is selected.');
     Exit;
@@ -314,7 +294,7 @@ begin
 
   if not FMounts.MountSnapshot(
     RepoEdit.Text,
-    FCommitHash,
+    FState.CommitHash,
     MountPoint,
     ErrorMessage
   ) then
@@ -501,23 +481,9 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
-  FTimeline := TStringList.Create;
-  FBranchIndex := TStringList.Create;
-  FTagCommits := TStringList.Create;
-  FTagNames := TStringList.Create;
-  FEntryStates := TStringList.Create;
-  FDeletedEntries := TStringList.Create;
-  FPreviousCommitHash := '';
-  FMergeIndex := -1;
-  FMergeHash := '';
+  InitGTMState(FState);
   FLoadingTimeline := False;
   FLoadingBranches := False;
-  FForkIndex := -1;
-  FForkHash := '';
-  FWindowSize := 100;
-  FWindowPredecessor := '';
-  FBranchCommitCount := 0;
-  FAfterForkCount := 0;
   FNavDirection := 0;
   FNavHoldTicks := 0;
   FNavRepeated := False;
@@ -526,9 +492,6 @@ begin
   FPendingTimelinePosition := 0;
   FDraggingVerticalSlider := False;
   FPendingVerticalPosition := 0;
-  FOldestCommitTime := 0;
-  FNewestCommitTime := 0;
-  FSelectedCommitTime := 0;
   FHistoryList := nil;
   FHistoryPath := '';
   FHistorySelectionUpdating := False;
@@ -557,8 +520,6 @@ begin
   CommitInfoLabel.Caption := 'Commit: not loaded';
   CompareLabel.Caption := 'Compare: —';
   PathLabel.Caption := 'Path: /';
-  FCommitHash := '';
-  FCurrentPath := '';
   UpdateSnapshotMountToggle;
   PrevButton.Enabled := False;
   NextButton.Enabled := False;
@@ -575,14 +536,9 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  DoneGTMState(FState);
   FMounts.UnmountAll;
   FMounts.Free;
-  FDeletedEntries.Free;
-  FEntryStates.Free;
-  FTagNames.Free;
-  FTagCommits.Free;
-  FBranchIndex.Free;
-  FTimeline.Free;
 end;
 
 procedure TMainForm.OpenRepositoryMenuItemClick(Sender: TObject);
@@ -646,11 +602,11 @@ end;
 
 procedure TMainForm.BranchEditChange(Sender: TObject);
 begin
-  FBranchIndex.Clear;
+  FState.BranchIndex.Clear;
   if FLoadingBranches then
     Exit;
 
-  if (FCommitHash <> '') and (Trim(BranchEdit.Text) <> '') then
+  if (FState.CommitHash <> '') and (Trim(BranchEdit.Text) <> '') then
     SwitchBranch;
 end;
 
@@ -660,7 +616,8 @@ var
   Wanted: string;
   I: Integer;
 begin
-  FBranchIndex.Clear;
+  SetRepository(FState, Trim(RepoEdit.Text));
+  FState.BranchIndex.Clear;
   if Trim(RepoEdit.Text) = '' then
     Exit;
 
@@ -702,10 +659,10 @@ var
   I, J: Integer;
 begin
   try
-    FTagNames.Clear;
-    FTagCommits.Clear;
-    FTagNames.Add('(none)');
-    FTagCommits.Add('');
+    FState.TagNames.Clear;
+    FState.TagCommits.Clear;
+    FState.TagNames.Add('(none)');
+    FState.TagCommits.Add('');
     TagEdit.Text := '(none)';
 
     if Trim(RepoEdit.Text) = '' then
@@ -738,8 +695,8 @@ begin
         CommitHash := ResolveTagCommit(RepoEdit.Text, TagName);
         if (CommitHash <> '') and (Reachable.IndexOf(CommitHash) >= 0) then
         begin
-          FTagNames.Add(TagName);
-          FTagCommits.Add(CommitHash);
+          FState.TagNames.Add(TagName);
+          FState.TagCommits.Add(CommitHash);
         end;
       end;
     finally
@@ -757,15 +714,15 @@ var
 begin
   TagEdit.Text := '(none)';
 
-  if FCommitHash = '' then
+  if FState.CommitHash = '' then
   begin
     Exit;
   end;
 
-  for I := 1 to FTagCommits.Count - 1 do
-    if SameText(FTagCommits[I], FCommitHash) then
+  for I := 1 to FState.TagCommits.Count - 1 do
+    if SameText(FState.TagCommits[I], FState.CommitHash) then
     begin
-      TagEdit.Text := FTagNames[I];
+      TagEdit.Text := FState.TagNames[I];
       Exit;
     end;
 
@@ -826,7 +783,7 @@ begin
     List := TListBox.Create(Chooser);
     List.Parent := Chooser;
     List.Align := alClient;
-    List.Items.Assign(FTagNames);
+    List.Items.Assign(FState.TagNames);
     List.ItemHeight := 24;
     List.ItemIndex := 0;
     List.OnDblClick := @TagChooserAccept;
@@ -842,12 +799,12 @@ begin
     end;
 
     SelectedIndex := List.ItemIndex;
-    if (SelectedIndex <= 0) or (SelectedIndex >= FTagCommits.Count) then
+    if (SelectedIndex <= 0) or (SelectedIndex >= FState.TagCommits.Count) then
       Exit;
 
-    TargetCommit := FTagCommits[SelectedIndex];
+    TargetCommit := FState.TagCommits[SelectedIndex];
 
-    FoundBranch := FBranchIndex.IndexOf(TargetCommit) >= 0;
+    FoundBranch := FState.BranchIndex.IndexOf(TargetCommit) >= 0;
 
     if not FoundBranch then
     begin
@@ -870,8 +827,8 @@ begin
               FLoadingBranches := False;
             end;
 
-            FBranchIndex.Assign(CandidatePath);
-            FBranchCommitCount := FBranchIndex.Count;
+            FState.BranchIndex.Assign(CandidatePath);
+            FState.BranchCommitCount := FState.BranchIndex.Count;
                       FoundBranch := True;
             Break;
           end;
@@ -889,9 +846,8 @@ begin
       Exit;
     end;
 
-    FPreviousCommitHash := '';
-    BuildBranchTimeline(TargetCommit);
-    FCommitHash := '';
+      BuildBranchTimeline(TargetCommit);
+    FState.CommitHash := '';
     SelectCommitHash(TargetCommit);
     UpdateTagSelection;
   finally
@@ -910,23 +866,25 @@ begin
   if Trim(BranchEdit.Text) = '' then
     Exit;
 
+  SetRepository(FState, Trim(RepoEdit.Text));
+  SetBranch(FState, Trim(BranchEdit.Text));
+
   Screen.Cursor := crHourGlass;
   try
-    FPreviousCommitHash := '';
-    FBranchIndex.Clear;
+      FState.BranchIndex.Clear;
     BuildBranchIndex;
 
-    if FBranchIndex.Count = 0 then
+    if FState.BranchIndex.Count = 0 then
       Exit;
 
     { Selecting a branch selects its GTM path and lands at the latest point
       on that path.  A rejoined branch therefore lands on the shared
       continuation, not on the old raw Git branch ref. }
-    TargetCommit := FBranchIndex[FBranchIndex.Count - 1];
+    TargetCommit := FState.BranchIndex[FState.BranchIndex.Count - 1];
 
     BuildBranchTimeline(TargetCommit);
 
-    FCommitHash := '';
+    FState.CommitHash := '';
     SelectCommitHash(TargetCommit);
   finally
     Screen.Cursor := crDefault;
@@ -956,6 +914,9 @@ begin
   if Trim(TimeEdit.Text) = '' then
     TimeEdit.Text := CurrentLocalTimeForGit;
 
+  SetRepository(FState, Trim(RepoEdit.Text));
+  SetBranch(FState, Trim(BranchEdit.Text));
+
   Screen.Cursor := crHourGlass;
   try
     TargetCommit := ResolveCommit(
@@ -964,15 +925,14 @@ begin
       TimeEdit.Text
     );
 
-    FCurrentPath := '';
-    FPreviousCommitHash := '';
-    BuildBranchTimeline(TargetCommit);
+    FState.CurrentPath := '';
+      BuildBranchTimeline(TargetCommit);
     PopulateTags;
 
-    I := FTimeline.IndexOf(TargetCommit);
+    I := FState.Timeline.IndexOf(TargetCommit);
     if I >= 0 then
     begin
-      FCommitHash := '';
+      FState.CommitHash := '';
       SelectTimelineIndex(I);
     end;
   finally
@@ -982,39 +942,41 @@ end;
 
 procedure TMainForm.BuildBranchIndex;
 begin
-  FBranchIndex.Clear;
-  BuildTimeline(RepoEdit.Text, BranchEdit.Text, FBranchIndex);
-  FBranchCommitCount := FBranchIndex.Count;
+  SetRepository(FState, Trim(RepoEdit.Text));
+  SetBranch(FState, Trim(BranchEdit.Text));
+  FState.BranchIndex.Clear;
+  BuildTimeline(RepoEdit.Text, BranchEdit.Text, FState.BranchIndex);
+  FState.BranchCommitCount := FState.BranchIndex.Count;
 end;
 
 procedure TMainForm.BuildBranchTimeline(const CenterCommit: string);
 var
   CenterIndex: Integer;
 begin
-  if FBranchIndex.Count = 0 then
+  if FState.BranchIndex.Count = 0 then
     BuildBranchIndex;
 
-  if FBranchIndex.Count = 0 then
+  if FState.BranchIndex.Count = 0 then
     Exit;
 
   BuildTimelineSlice(
-    FBranchIndex,
+    FState.BranchIndex,
     CenterCommit,
-    FWindowSize,
-    FTimeline,
+    FState.WindowSize,
+    FState.Timeline,
     CenterIndex,
-    FWindowPredecessor
+    FState.WindowPredecessor
   );
 
-  FCurrentBranchPosition := CenterIndex;
+  FState.CurrentBranchPosition := CenterIndex;
 
-  FOldestCommitTime := CommitUnixTime(
+  FState.OldestCommitTime := CommitUnixTime(
     RepoEdit.Text,
-    FBranchIndex[0]
+    FState.BranchIndex[0]
   );
-  FNewestCommitTime := CommitUnixTime(
+  FState.NewestCommitTime := CommitUnixTime(
     RepoEdit.Text,
-    FBranchIndex[FBranchIndex.Count - 1]
+    FState.BranchIndex[FState.BranchIndex.Count - 1]
   );
 
   UpdateTimeRailLabels;
@@ -1022,16 +984,16 @@ begin
   FLoadingTimeline := True;
   try
     TimeTrackBar.Min := 0;
-    TimeTrackBar.Max := FBranchCommitCount - 1;
-    TimeTrackBar.Position := FCurrentBranchPosition;
-    TimeTrackBar.Enabled := FBranchCommitCount > 0;
+    TimeTrackBar.Max := FState.BranchCommitCount - 1;
+    TimeTrackBar.Position := FState.CurrentBranchPosition;
+    TimeTrackBar.Enabled := FState.BranchCommitCount > 0;
 
     VerticalTimeTrackBar.Min := 0;
     VerticalTimeTrackBar.Max := 1000;
-    FSelectedCommitTime := CommitUnixTime(RepoEdit.Text, CenterCommit);
+    FState.SelectedCommitTime := CommitUnixTime(RepoEdit.Text, CenterCommit);
     VerticalTimeTrackBar.Position :=
       CurrentCommitToVerticalSlider;
-    VerticalTimeTrackBar.Enabled := FNewestCommitTime > FOldestCommitTime;
+    VerticalTimeTrackBar.Enabled := FState.NewestCommitTime > FState.OldestCommitTime;
   finally
     FLoadingTimeline := False;
   end;
@@ -1042,7 +1004,7 @@ end;
 
 procedure TMainForm.EnsureCurrentPathExists;
 begin
-  EnsurePathExistsAtCommit(RepoEdit.Text, FCommitHash, FCurrentPath);
+  EnsurePathExistsAtCommit(RepoEdit.Text, FState.CommitHash, FState.CurrentPath);
 end;
 
 
@@ -1050,12 +1012,12 @@ function TMainForm.CurrentCommitToVerticalSlider: Integer;
 begin
   { The vertical rail is proportional to commit position, not elapsed time.
     Oldest commit is at the bottom; newest commit is at the top. }
-  if FBranchCommitCount <= 1 then
+  if FState.BranchCommitCount <= 1 then
     Exit(0);
 
   Result := 1000 - Round(
-    (FCurrentBranchPosition * 1000.0) /
-    (FBranchCommitCount - 1)
+    (FState.CurrentBranchPosition * 1000.0) /
+    (FState.BranchCommitCount - 1)
   );
 end;
 
@@ -1065,7 +1027,7 @@ var
 begin
   Result := 0;
 
-  if FBranchIndex.Count = 0 then
+  if FState.BranchIndex.Count = 0 then
     Exit;
 
   if SliderPos < 0 then
@@ -1073,21 +1035,21 @@ begin
   if SliderPos > 1000 then
     SliderPos := 1000;
 
-  if FBranchIndex.Count = 1 then
+  if FState.BranchIndex.Count = 1 then
     BranchPos := 0
   else
     BranchPos := Round(
-      ((1000 - SliderPos) * (FBranchIndex.Count - 1)) / 1000.0
+      ((1000 - SliderPos) * (FState.BranchIndex.Count - 1)) / 1000.0
     );
 
   if BranchPos < 0 then
     BranchPos := 0;
-  if BranchPos >= FBranchIndex.Count then
-    BranchPos := FBranchIndex.Count - 1;
+  if BranchPos >= FState.BranchIndex.Count then
+    BranchPos := FState.BranchIndex.Count - 1;
 
   Result := CommitUnixTime(
     RepoEdit.Text,
-    FBranchIndex[BranchPos]
+    FState.BranchIndex[BranchPos]
   );
 end;
 
@@ -1099,7 +1061,7 @@ begin
   if not VerticalTimeTrackBar.Enabled then
     Exit;
 
-  if FBranchIndex.Count = 0 then
+  if FState.BranchIndex.Count = 0 then
     Exit;
 
   if SliderPos < 0 then
@@ -1107,19 +1069,19 @@ begin
   if SliderPos > 1000 then
     SliderPos := 1000;
 
-  if FBranchIndex.Count = 1 then
+  if FState.BranchIndex.Count = 1 then
     BranchPos := 0
   else
     BranchPos := Round(
-      ((1000 - SliderPos) * (FBranchIndex.Count - 1)) / 1000.0
+      ((1000 - SliderPos) * (FState.BranchIndex.Count - 1)) / 1000.0
     );
 
   if BranchPos < 0 then
     BranchPos := 0;
-  if BranchPos >= FBranchIndex.Count then
-    BranchPos := FBranchIndex.Count - 1;
+  if BranchPos >= FState.BranchIndex.Count then
+    BranchPos := FState.BranchIndex.Count - 1;
 
-  CommitHash := FBranchIndex[BranchPos];
+  CommitHash := FState.BranchIndex[BranchPos];
   SelectCommitHash(CommitHash);
 end;
 
@@ -1127,15 +1089,15 @@ procedure TMainForm.UpdateVerticalTimeSlider;
 var
   SliderPos: Integer;
 begin
-  if FBranchCommitCount <= 0 then
+  if FState.BranchCommitCount <= 0 then
     Exit;
 
-  if FBranchCommitCount = 1 then
+  if FState.BranchCommitCount = 1 then
     SliderPos := 0
   else
     SliderPos := 1000 - Round(
-      (FCurrentBranchPosition * 1000.0) /
-      (FBranchCommitCount - 1)
+      (FState.CurrentBranchPosition * 1000.0) /
+      (FState.BranchCommitCount - 1)
     );
 
   FLoadingTimeline := True;
@@ -1150,17 +1112,17 @@ end;
 
 procedure TMainForm.UpdateTimeRailLabels;
 begin
-  if FNewestCommitTime > 0 then
+  if FState.NewestCommitTime > 0 then
     TimeNowLabel.Caption :=
       FormatDateTime('yyyy-mm-dd hh:nn',
-        UnixToDateTime(FNewestCommitTime, False))
+        UnixToDateTime(FState.NewestCommitTime, False))
   else
     TimeNowLabel.Caption := '';
 
-  if FOldestCommitTime > 0 then
+  if FState.OldestCommitTime > 0 then
     TimeStartLabel.Caption :=
       FormatDateTime('yyyy-mm-dd hh:nn',
-        UnixToDateTime(FOldestCommitTime, False))
+        UnixToDateTime(FState.OldestCommitTime, False))
   else
     TimeStartLabel.Caption := '';
 
@@ -1171,8 +1133,8 @@ procedure TMainForm.UpdateTimeCurrentLabel;
 var
   P, RailTop, RailBottom, Y: Integer;
 begin
-  if (FSelectedCommitTime <= 0) or
-     (FNewestCommitTime <= FOldestCommitTime) then
+  if (FState.SelectedCommitTime <= 0) or
+     (FState.NewestCommitTime <= FState.OldestCommitTime) then
   begin
     TimeCurrentLabel.Caption := '';
     Exit;
@@ -1189,7 +1151,7 @@ begin
 
   TimeCurrentLabel.Caption :=
     FormatDateTime('yyyy-mm-dd hh:nn',
-      UnixToDateTime(FSelectedCommitTime, False));
+      UnixToDateTime(FState.SelectedCommitTime, False));
 
   RailTop := VerticalTimeTrackBar.Top;
   RailBottom := VerticalTimeTrackBar.Top +
@@ -1218,15 +1180,15 @@ function TMainForm.ResolveSliderCommit(SliderPos: Integer): string;
 begin
   Result := '';
 
-  if FBranchIndex.Count = 0 then
+  if FState.BranchIndex.Count = 0 then
     Exit;
 
   if SliderPos < 0 then
     SliderPos := 0;
-  if SliderPos >= FBranchIndex.Count then
-    SliderPos := FBranchIndex.Count - 1;
+  if SliderPos >= FState.BranchIndex.Count then
+    SliderPos := FState.BranchIndex.Count - 1;
 
-  Result := Trim(FBranchIndex[SliderPos]);
+  Result := Trim(FState.BranchIndex[SliderPos]);
 end;
 
 procedure TMainForm.SelectCommitHash(const CommitHash: string);
@@ -1237,12 +1199,12 @@ begin
   if CommitHash = '' then
     Exit;
 
-  FullHash := ResolveCommitAbbreviation(FBranchIndex, CommitHash);
+  FullHash := ResolveCommitAbbreviation(FState.BranchIndex, CommitHash);
 
-  if FTimeline.IndexOf(FullHash) < 0 then
+  if FState.Timeline.IndexOf(FullHash) < 0 then
     BuildBranchTimeline(FullHash);
 
-  I := FTimeline.IndexOf(FullHash);
+  I := FState.Timeline.IndexOf(FullHash);
   if I >= 0 then
   begin
     SelectTimelineIndex(I);
@@ -1251,53 +1213,53 @@ begin
       This keeps the horizontal commit slider, vertical time slider, and
       snapshot synchronized.  Time-driven navigation restores its requested
       time after this call. }
-    FSelectedCommitTime := CommitUnixTime(RepoEdit.Text, FCommitHash);
+    FState.SelectedCommitTime := CommitUnixTime(RepoEdit.Text, FState.CommitHash);
     UpdateVerticalTimeSlider;
   end;
 end;
 
 procedure TMainForm.SelectTimelineIndex(Index: Integer);
 begin
-  if FTimeline.Count = 0 then
+  if FState.Timeline.Count = 0 then
     Exit;
 
   if Index < 0 then
     Index := 0;
-  if Index >= FTimeline.Count then
-    Index := FTimeline.Count - 1;
+  if Index >= FState.Timeline.Count then
+    Index := FState.Timeline.Count - 1;
 
-  FPreviousCommitHash := FCommitHash;
-  FCommitHash := Trim(FTimeline[Index]);
+  FState.PreviousCommitHash := FState.CommitHash;
+  FState.CommitHash := Trim(FState.Timeline[Index]);
 
-  FCurrentBranchPosition := FBranchIndex.IndexOf(FCommitHash);
-  if FCurrentBranchPosition < 0 then
-    FCurrentBranchPosition := 0;
+  FState.CurrentBranchPosition := FState.BranchIndex.IndexOf(FState.CommitHash);
+  if FState.CurrentBranchPosition < 0 then
+    FState.CurrentBranchPosition := 0;
 
   FLoadingTimeline := True;
   try
-    TimeTrackBar.Position := FCurrentBranchPosition;
+    TimeTrackBar.Position := FState.CurrentBranchPosition;
   finally
     FLoadingTimeline := False;
   end;
 
-  TimeEdit.Text := CommitTime(RepoEdit.Text, FCommitHash);
-  SnapshotLabel.Caption := 'Snapshot: ' + FCommitHash + '  @  ' +
+  TimeEdit.Text := CommitTime(RepoEdit.Text, FState.CommitHash);
+  SnapshotLabel.Caption := 'Snapshot: ' + FState.CommitHash + '  @  ' +
     TimeEdit.Text;
-  CommitInfoLabel.Caption := 'Commit: ' + Copy(FCommitHash, 1, 8) +
-    '  ' + TimeEdit.Text + '  ' + CommitSubject(RepoEdit.Text, FCommitHash);
+  CommitInfoLabel.Caption := 'Commit: ' + Copy(FState.CommitHash, 1, 8) +
+    '  ' + TimeEdit.Text + '  ' + CommitSubject(RepoEdit.Text, FState.CommitHash);
 
-  if FPreviousCommitHash = '' then
+  if FState.PreviousCommitHash = '' then
     CompareLabel.Caption := 'Compare: —'
-  else if CommitTime(RepoEdit.Text, FPreviousCommitHash) <
-          CommitTime(RepoEdit.Text, FCommitHash) then
-    CompareLabel.Caption := 'Compare: ' + Copy(FPreviousCommitHash, 1, 8) +
-      '  ->  ' + Copy(FCommitHash, 1, 8)
+  else if CommitTime(RepoEdit.Text, FState.PreviousCommitHash) <
+          CommitTime(RepoEdit.Text, FState.CommitHash) then
+    CompareLabel.Caption := 'Compare: ' + Copy(FState.PreviousCommitHash, 1, 8) +
+      '  ->  ' + Copy(FState.CommitHash, 1, 8)
   else
-    CompareLabel.Caption := 'Compare: ' + Copy(FCommitHash, 1, 8) +
-      '  <-  ' + Copy(FPreviousCommitHash, 1, 8);
+    CompareLabel.Caption := 'Compare: ' + Copy(FState.CommitHash, 1, 8) +
+      '  <-  ' + Copy(FState.PreviousCommitHash, 1, 8);
 
   EnsureCurrentPathExists;
-  BuildEntryStates(PredecessorCommit(FCommitHash), FCommitHash);
+  BuildEntryStates(PredecessorCommit(FState.CommitHash), FState.CommitHash);
   LoadCurrentDirectory;
   UpdateTimelineControls;
   UpdateTagSelection;
@@ -1309,12 +1271,7 @@ var
   RefTip: string;
   RefTipIndex: Integer;
 begin
-  FForkIndex := -1;
-  FForkHash := '';
-  FMergeIndex := -1;
-  FMergeHash := '';
-  FBranchCommitCount := FBranchIndex.Count;
-  FAfterForkCount := 0;
+  FState.BranchCommitCount := FState.BranchIndex.Count;
 
   if (Trim(BranchEdit.Text) = '') or
      SameText(Trim(BranchEdit.Text), 'master') then
@@ -1323,34 +1280,34 @@ begin
   if BranchEdit.Items.IndexOf('master') < 0 then
     Exit;
 
-  FForkHash := FindMergeBase(
+  FState.ForkHash := FindMergeBase(
     RepoEdit.Text,
     'master',
     BranchEdit.Text
   );
 
-  if FForkHash <> '' then
-    FForkIndex := FBranchIndex.IndexOf(FForkHash);
+  if FState.ForkHash <> '' then
+    FState.ForkIndex := FState.BranchIndex.IndexOf(FState.ForkHash);
 
   { BuildTimeline already contains the selected branch's complete ordered
     path.  If the branch ref tip is not the end of that path, the next commit
     is the merge where the branch rejoins the continuation. }
   RefTip := BranchTip(RepoEdit.Text, BranchEdit.Text);
-  RefTipIndex := FBranchIndex.IndexOf(RefTip);
+  RefTipIndex := FState.BranchIndex.IndexOf(RefTip);
 
   if (RefTipIndex >= 0) and
-     (RefTipIndex < FBranchIndex.Count - 1) then
+     (RefTipIndex < FState.BranchIndex.Count - 1) then
   begin
-    FMergeIndex := RefTipIndex + 1;
-    FMergeHash := FBranchIndex[FMergeIndex];
+    FState.MergeIndex := RefTipIndex + 1;
+    FState.MergeHash := FState.BranchIndex[FState.MergeIndex];
   end;
 
-  if FForkIndex >= 0 then
+  if FState.ForkIndex >= 0 then
   begin
-    if FMergeIndex > FForkIndex then
-      FAfterForkCount := FMergeIndex - FForkIndex - 1
+    if FState.MergeIndex > FState.ForkIndex then
+      FState.AfterForkCount := FState.MergeIndex - FState.ForkIndex - 1
     else
-      FAfterForkCount := FBranchIndex.Count - FForkIndex - 1;
+      FState.AfterForkCount := FState.BranchIndex.Count - FState.ForkIndex - 1;
   end;
 end;
 
@@ -1364,46 +1321,46 @@ begin
   ForkMarkerLabel.Caption := '';
   MergeMarkerLabel.Caption := '';
 
-  if FTimeline.Count = 0 then
+  if FState.Timeline.Count = 0 then
   begin
     ScaleLabel.Caption := '';
     Exit;
   end;
 
-  CurrentIndex := FTimeline.IndexOf(FCommitHash);
+  CurrentIndex := FState.Timeline.IndexOf(FState.CommitHash);
   if CurrentIndex < 0 then
     CurrentIndex := 0;
 
-  WindowStartPos := FCurrentBranchPosition - CurrentIndex;
-  WindowEndPos := WindowStartPos + FTimeline.Count - 1;
+  WindowStartPos := FState.CurrentBranchPosition - CurrentIndex;
+  WindowEndPos := WindowStartPos + FState.Timeline.Count - 1;
 
   ScaleLabel.Caption :=
     'Cached commits ' + IntToStr(WindowStartPos + 1) + '-' +
     IntToStr(WindowEndPos + 1) + ' of ' +
-    IntToStr(FBranchCommitCount);
+    IntToStr(FState.BranchCommitCount);
 
-  if FForkHash <> '' then
+  if FState.ForkHash <> '' then
   begin
-    if FMergeHash <> '' then
+    if FState.MergeHash <> '' then
       ScaleLabel.Caption := ScaleLabel.Caption +
-        ' · fork ' + Copy(FForkHash, 1, 8) +
-        ' -> merge ' + Copy(FMergeHash, 1, 8) +
+        ' · fork ' + Copy(FState.ForkHash, 1, 8) +
+        ' -> merge ' + Copy(FState.MergeHash, 1, 8) +
         ' -> continues'
     else
       ScaleLabel.Caption := ScaleLabel.Caption +
-        ' · fork ' + Copy(FForkHash, 1, 8) +
+        ' · fork ' + Copy(FState.ForkHash, 1, 8) +
         ' · unmerged';
   end;
 
-  if FBranchCommitCount > 1 then
+  if FState.BranchCommitCount > 1 then
   begin
     PixelRange := TimeTrackBar.Width;
 
     { Fork and merge annotations live below the slider. }
-    if FForkIndex >= 0 then
+    if FState.ForkIndex >= 0 then
     begin
       ForkX := TimeTrackBar.Left +
-        Round(FForkIndex * PixelRange / (FBranchCommitCount - 1));
+        Round(FState.ForkIndex * PixelRange / (FState.BranchCommitCount - 1));
       ForkMarkerLabel.AutoSize := False;
       ForkMarkerLabel.Width := 18;
       ForkMarkerLabel.Height := 18;
@@ -1416,10 +1373,10 @@ begin
       ForkMarkerLabel.ShowHint := False;
     end;
 
-    if FMergeIndex >= 0 then
+    if FState.MergeIndex >= 0 then
     begin
       MergeX := TimeTrackBar.Left +
-        Round(FMergeIndex * PixelRange / (FBranchCommitCount - 1));
+        Round(FState.MergeIndex * PixelRange / (FState.BranchCommitCount - 1));
       MergeMarkerLabel.AutoSize := False;
       MergeMarkerLabel.Width := 18;
       MergeMarkerLabel.Height := 18;
@@ -1438,10 +1395,10 @@ end;
 
 procedure TMainForm.UpdateTimelineControls;
 begin
-  PrevButton.Enabled := FCurrentBranchPosition > 0;
-  NextButton.Enabled := FCurrentBranchPosition < FBranchCommitCount - 1;
-  FirstButton.Enabled := FCurrentBranchPosition > 0;
-  LastButton.Enabled := FCurrentBranchPosition < FBranchCommitCount - 1;
+  PrevButton.Enabled := FState.CurrentBranchPosition > 0;
+  NextButton.Enabled := FState.CurrentBranchPosition < FState.BranchCommitCount - 1;
+  FirstButton.Enabled := FState.CurrentBranchPosition > 0;
+  LastButton.Enabled := FState.CurrentBranchPosition < FState.BranchCommitCount - 1;
 
   UpdateTimelineLabels;
 end;
@@ -1451,17 +1408,17 @@ var
   TargetPos: Integer;
   CommitHash: string;
 begin
-  if FBranchCommitCount <= 0 then
+  if FState.BranchCommitCount <= 0 then
     Exit;
 
-  TargetPos := FCurrentBranchPosition + Delta;
+  TargetPos := FState.CurrentBranchPosition + Delta;
 
   if TargetPos < 0 then
     TargetPos := 0;
-  if TargetPos >= FBranchCommitCount then
-    TargetPos := FBranchCommitCount - 1;
+  if TargetPos >= FState.BranchCommitCount then
+    TargetPos := FState.BranchCommitCount - 1;
 
-  if TargetPos = FCurrentBranchPosition then
+  if TargetPos = FState.CurrentBranchPosition then
     Exit;
 
   CommitHash := ResolveSliderCommit(TargetPos);
@@ -1557,12 +1514,12 @@ begin
     FNavHoldTicks := 0;
     FNavKey := 0;
 
-    if FBranchIndex.Count > 0 then
+    if FState.BranchIndex.Count > 0 then
     begin
       if Direction < 0 then
-        SelectCommitHash(FBranchIndex[0])
+        SelectCommitHash(FState.BranchIndex[0])
       else
-        SelectCommitHash(FBranchIndex[FBranchIndex.Count - 1]);
+        SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
     end;
 
     Key := 0;
@@ -1608,14 +1565,14 @@ end;
 
 procedure TMainForm.FirstButtonClick(Sender: TObject);
 begin
-  if FBranchIndex.Count > 0 then
-    SelectCommitHash(FBranchIndex[0]);
+  if FState.BranchIndex.Count > 0 then
+    SelectCommitHash(FState.BranchIndex[0]);
 end;
 
 procedure TMainForm.LastButtonClick(Sender: TObject);
 begin
-  if FBranchIndex.Count > 0 then
-    SelectCommitHash(FBranchIndex[FBranchIndex.Count - 1]);
+  if FState.BranchIndex.Count > 0 then
+    SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
 end;
 
 procedure TMainForm.NextButtonClick(Sender: TObject);
@@ -1641,7 +1598,7 @@ begin
     Exit;
 
   FPendingVerticalPosition := VerticalTimeTrackBar.Position;
-  FSelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
+  FState.SelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
 
   FVerticalPreviewTimer.Enabled := False;
   FVerticalPreviewTimer.Enabled := True;
@@ -1668,7 +1625,7 @@ begin
 
   FDraggingVerticalSlider := False;
   FPendingVerticalPosition := VerticalTimeTrackBar.Position;
-  FSelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
+  FState.SelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
 
   FVerticalPreviewTimer.Enabled := False;
   UpdateTimeCurrentLabel;
@@ -1682,7 +1639,7 @@ begin
     Exit;
 
   FPendingVerticalPosition := VerticalTimeTrackBar.Position;
-  FSelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
+  FState.SelectedCommitTime := VerticalSliderToCommitTime(FPendingVerticalPosition);
 
   FVerticalPreviewTimer.Enabled := False;
   UpdateTimeCurrentLabel;
@@ -1749,14 +1706,14 @@ var
   I: Integer;
 begin
   Result := '';
-  if (CommitHash = '') or (FTimeline = nil) then
+  if (CommitHash = '') or (FState.Timeline = nil) then
     Exit;
 
-  I := FTimeline.IndexOf(CommitHash);
+  I := FState.Timeline.IndexOf(CommitHash);
   if I > 0 then
-    Result := Trim(FTimeline[I - 1])
+    Result := Trim(FState.Timeline[I - 1])
   else if I = 0 then
-    Result := FWindowPredecessor;
+    Result := FState.WindowPredecessor;
 end;
 
 procedure TMainForm.BuildEntryStates(const FromCommit, ToCommit: string);
@@ -1765,16 +1722,16 @@ begin
     RepoEdit.Text,
     FromCommit,
     ToCommit,
-    FCurrentPath,
-    FEntryStates,
-    FDeletedEntries
+    FState.CurrentPath,
+    FState.EntryStates,
+    FState.DeletedEntries
   );
 end;
 
 
 procedure TMainForm.RefreshCurrentDirectory;
 begin
-  BuildEntryStates(PredecessorCommit(FCommitHash), FCommitHash);
+  BuildEntryStates(PredecessorCommit(FState.CommitHash), FState.CommitHash);
   LoadCurrentDirectory;
   TreeList.Invalidate;
 end;
@@ -1785,7 +1742,7 @@ var
   I: Integer;
   RawEntry, EntryName, ChangeState, DisplayEntry: string;
 begin
-  if FCommitHash = '' then
+  if FState.CommitHash = '' then
     Exit;
 
   Entries := TStringList.Create;
@@ -1793,8 +1750,8 @@ begin
   try
     ListDirectoryEntries(
       RepoEdit.Text,
-      FCommitHash,
-      FCurrentPath,
+      FState.CommitHash,
+      FState.CurrentPath,
       Entries
     );
 
@@ -1810,7 +1767,7 @@ begin
             (EntryName[Length(EntryName)] = '/') do
         Delete(EntryName, Length(EntryName), 1);
 
-      ChangeState := FEntryStates.Values[EntryName];
+      ChangeState := FState.EntryStates.Values[EntryName];
 
       if ChangeState = 'added' then
         DisplayEntry := RawEntry + ' [added]'
@@ -1822,14 +1779,14 @@ begin
       DisplayEntries.Add(DisplayEntry);
     end;
 
-    for I := 0 to FDeletedEntries.Count - 1 do
-      DisplayEntries.Add(FDeletedEntries[I] + ' [deleted]');
+    for I := 0 to FState.DeletedEntries.Count - 1 do
+      DisplayEntries.Add(FState.DeletedEntries[I] + ' [deleted]');
 
     TreeList.Items.BeginUpdate;
     try
       TreeList.Items.Clear;
 
-      if FCurrentPath <> '' then
+      if FState.CurrentPath <> '' then
         TreeList.Items.Add('../');
 
       for I := 0 to DisplayEntries.Count - 1 do
@@ -1838,10 +1795,10 @@ begin
       TreeList.Items.EndUpdate;
     end;
 
-    if FCurrentPath = '' then
+    if FState.CurrentPath = '' then
       PathLabel.Caption := 'Path: /'
     else
-      PathLabel.Caption := 'Path: /' + FCurrentPath;
+      PathLabel.Caption := 'Path: /' + FState.CurrentPath;
   finally
     DisplayEntries.Free;
     Entries.Free;
@@ -1922,10 +1879,10 @@ begin
         (EntryText[Length(EntryText)] = '/') do
     Delete(EntryText, Length(EntryText), 1);
 
-  if FCurrentPath = '' then
+  if FState.CurrentPath = '' then
     Result := EntryText
   else
-    Result := FCurrentPath + '/' + EntryText;
+    Result := FState.CurrentPath + '/' + EntryText;
 end;
 
 function TMainForm.TempPathForCommit(const CommitHash,
@@ -1984,7 +1941,7 @@ begin
   if DirName = '' then
     Exit;
 
-  FCurrentPath := JoinRepoPath(FCurrentPath, DirName);
+  FState.CurrentPath := JoinRepoPath(FState.CurrentPath, DirName);
   RefreshCurrentDirectory;
 end;
 
@@ -1992,14 +1949,14 @@ procedure TMainForm.GoParent;
 var
   P: Integer;
 begin
-  if FCurrentPath = '' then
+  if FState.CurrentPath = '' then
     Exit;
 
-  P := LastDelimiter('/', FCurrentPath);
+  P := LastDelimiter('/', FState.CurrentPath);
   if P = 0 then
-    FCurrentPath := ''
+    FState.CurrentPath := ''
   else
-    FCurrentPath := Copy(FCurrentPath, 1, P - 1);
+    FState.CurrentPath := Copy(FState.CurrentPath, 1, P - 1);
 
   RefreshCurrentDirectory;
 end;
@@ -2011,7 +1968,7 @@ begin
   if EntryName = '' then
     Exit;
 
-  MaterializeTempFile(FCommitHash, EntryName, TempFile);
+  MaterializeTempFile(FState.CommitHash, EntryName, TempFile);
 
   if not OpenDocument(TempFile) then
     MessageDlg('Unable to open: ' + TempFile, mtError, [mbOK], 0);
@@ -2080,7 +2037,7 @@ begin
 
   SaveDialog.FileName := ExtractFileName(PathName);
   if SaveDialog.Execute then
-    ExtractFile(RepoEdit.Text, FCommitHash, PathName, SaveDialog.FileName);
+    ExtractFile(RepoEdit.Text, FState.CommitHash, PathName, SaveDialog.FileName);
 end;
 
 procedure TMainForm.VisualDiffMenuItemClick(Sender: TObject);
@@ -2091,12 +2048,12 @@ begin
   if PathName = '' then
     Exit;
 
-  PrevCommit := PredecessorCommit(FCommitHash);
+  PrevCommit := PredecessorCommit(FState.CommitHash);
   if PrevCommit = '' then
     Exit;
 
   MaterializeTempFile(PrevCommit, PathName, OldFile);
-  MaterializeTempFile(FCommitHash, PathName, NewFile);
+  MaterializeTempFile(FState.CommitHash, PathName, NewFile);
 
   if not VisualDiff(OldFile, NewFile, ErrorMessage) then
     MessageDlg('Unable to launch visual diff: ' + ErrorMessage,
@@ -2316,10 +2273,10 @@ var
     if Length(ShortHash) >= 40 then
       Exit;
 
-    for J := 0 to FBranchIndex.Count - 1 do
-      if Pos(LowerCase(ShortHash), LowerCase(FBranchIndex[J])) = 1 then
+    for J := 0 to FState.BranchIndex.Count - 1 do
+      if Pos(LowerCase(ShortHash), LowerCase(FState.BranchIndex[J])) = 1 then
       begin
-        Result := FBranchIndex[J];
+        Result := FState.BranchIndex[J];
         Exit;
       end;
   end;
