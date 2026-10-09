@@ -5,9 +5,9 @@ unit mainform;
 interface
 
 uses
-  Classes, SysUtils, DateUtils, Forms, Controls, StdCtrls, Dialogs, ComCtrls, LCLIntf,
+  Classes, SysUtils, DateUtils, Forms, Controls, StdCtrls, Buttons, Dialogs, ComCtrls, LCLIntf,
   LCLType,
-  Graphics, Menus, Process, ExtCtrls, gtmcore;
+  Graphics, Menus, ExtCtrls, gtmcore, gtmmount, gtmexec;
 
 type
   TMainForm = class(TForm)
@@ -29,8 +29,23 @@ type
     HistoryMenuItem: TMenuItem;
     SaveDialog: TSaveDialog;
     BrowseButton: TButton;
-    MountButton: TButton;
-    MountsButton: TButton;
+    MainMenu: TMainMenu;
+    FileMenu: TMenuItem;
+    OpenRepositoryMenuItem: TMenuItem;
+    QuitMenuItem: TMenuItem;
+    NavigateMenu: TMenuItem;
+    FirstCommitMenuItem: TMenuItem;
+    PreviousCommitMenuItem: TMenuItem;
+    NextCommitMenuItem: TMenuItem;
+    LastCommitMenuItem: TMenuItem;
+    SelectTagMenuItem: TMenuItem;
+    SnapshotMenu: TMenuItem;
+    MountSnapshotMenuItem: TMenuItem;
+    MountedSnapshotsMenuItem: TMenuItem;
+    SnapshotSeparatorMenuItem: TMenuItem;
+    UnmountAllMenuItem: TMenuItem;
+    HelpMenu: TMenuItem;
+    AboutMenuItem: TMenuItem;
     NextButton: TButton;
     PathLabel: TLabel;
     FirstButton: TButton;
@@ -39,6 +54,9 @@ type
     RepoEdit: TEdit;
     RepoLabel: TLabel;
     SnapshotLabel: TLabel;
+    SnapshotMountButton: TSpeedButton;
+    SnapshotUnmountButton: TSpeedButton;
+    SnapshotMountsButton: TSpeedButton;
     TimeEdit: TEdit;
     TimeLabel: TLabel;
     TimeTrackBar: TTrackBar;
@@ -49,8 +67,20 @@ type
     TreeList: TListBox;
     SelectDirectoryDialog1: TSelectDirectoryDialog;
     procedure BrowseButtonClick(Sender: TObject);
-    procedure MountButtonClick(Sender: TObject);
-    procedure MountsButtonClick(Sender: TObject);
+    procedure OpenRepositoryMenuItemClick(Sender: TObject);
+    procedure QuitMenuItemClick(Sender: TObject);
+    procedure FirstCommitMenuItemClick(Sender: TObject);
+    procedure PreviousCommitMenuItemClick(Sender: TObject);
+    procedure NextCommitMenuItemClick(Sender: TObject);
+    procedure LastCommitMenuItemClick(Sender: TObject);
+    procedure SelectTagMenuItemClick(Sender: TObject);
+    procedure MountSnapshotMenuItemClick(Sender: TObject);
+    procedure MountedSnapshotsMenuItemClick(Sender: TObject);
+    procedure UnmountAllMenuItemClick(Sender: TObject);
+    procedure SnapshotMountButtonClick(Sender: TObject);
+    procedure SnapshotUnmountButtonClick(Sender: TObject);
+    procedure SnapshotMountsButtonClick(Sender: TObject);
+    procedure AboutMenuItemClick(Sender: TObject);
     procedure BranchEditChange(Sender: TObject);
     procedure TagButtonClick(Sender: TObject);
     procedure TagChooserAccept(Sender: TObject);
@@ -123,7 +153,7 @@ type
     FNavHoldTicks: Integer;
     FNavRepeated: Boolean;
     FNavKey: Word;
-    FDraggingVerticalSliderline: Boolean;
+    FDraggingTimeline: Boolean;
     FPendingTimelinePosition: Integer;
     FDraggingVerticalSlider: Boolean;
     FPendingVerticalPosition: Integer;
@@ -134,8 +164,7 @@ type
     FHistoryList: TListBox;
     FHistoryPath: string;
     FHistorySelectionUpdating: Boolean;
-    FMountCommits: TStringList;
-    FMountPoints: TStringList;
+    FMounts: TGTMMountManager;
     FMountList: TListBox;
     procedure LoadSnapshot;
     procedure LoadCurrentDirectory;
@@ -165,9 +194,6 @@ type
     procedure SelectCommitHash(const CommitHash: string);
     function PredecessorCommit(const CommitHash: string): string;
     procedure BuildEntryStates(const FromCommit, ToCommit: string);
-    function EntryNameFromObject(const S: string): string;
-    function EntryHashFromObject(const S: string): string;
-    function FindObjectByName(Objects: TStrings; const EntryName: string): string;
     function StripStatusDecoration(const S: string): string;
     function DisplayStatus(const S: string): string;
     function IsDeletedDisplay(const S: string): Boolean;
@@ -178,11 +204,8 @@ type
     procedure MaterializeTempFile(const CommitHash, RepoPath: string;
       out TempFile: string);
     function JoinRepoPath(const BasePath, EntryName: string): string;
-    function MountHelperPath: string;
-    function SnapshotMountPoint(const Repo, CommitHash: string): string;
     procedure MountCurrentSnapshot;
-    procedure UnmountIndex(Index: Integer);
-    procedure UnmountAllSnapshots;
+    procedure UpdateSnapshotMountToggle;
     procedure RefreshMountList;
     procedure MountOpenClick(Sender: TObject);
     procedure MountUnmountClick(Sender: TObject);
@@ -196,27 +219,14 @@ var
 
 implementation
 
+{$I gtmversion.inc}
+
 {$R *.lfm}
 
 
 
 
-function TMainForm.MountHelperPath: string;
-begin
-  Result := IncludeTrailingPathDelimiter(ExtractFilePath(ExpandFileName(ParamStr(0)))) +
-    'gtm-mount';
-end;
 
-function TMainForm.SnapshotMountPoint(const Repo, CommitHash: string): string;
-var
-  BaseDir, RepoName, ShortHash: string;
-begin
-  BaseDir := IncludeTrailingPathDelimiter(GetEnvironmentVariable('HOME')) +
-    '.cache/gtm/mounts';
-  RepoName := ExtractFileName(ExcludeTrailingPathDelimiter(ExpandFileName(Repo)));
-  ShortHash := Copy(CommitHash, 1, 8);
-  Result := IncludeTrailingPathDelimiter(BaseDir) + RepoName + '-' + ShortHash;
-end;
 
 procedure TMainForm.RefreshMountList;
 var
@@ -226,20 +236,75 @@ begin
     Exit;
 
   FMountList.Items.Clear;
-  for I := 0 to FMountPoints.Count - 1 do
+  for I := 0 to FMounts.Count - 1 do
     FMountList.Items.Add(
-      Copy(FMountCommits[I], 1, 8) + '   ' + FMountPoints[I]
+      Copy(FMounts.Commits[I], 1, 8) + '   ' + FMounts.MountPoints[I]
     );
 
   if FMountList.Items.Count > 0 then
     FMountList.ItemIndex := 0;
 end;
 
+
+procedure TMainForm.UpdateSnapshotMountToggle;
+var
+  HasSnapshot, Mounted: Boolean;
+begin
+  HasSnapshot :=
+    (Trim(RepoEdit.Text) <> '') and (Trim(FCommitHash) <> '');
+
+  Mounted :=
+    (FMounts <> nil) and
+    HasSnapshot and
+    FMounts.IsMounted(RepoEdit.Text, FCommitHash);
+
+  SnapshotMountButton.Enabled := HasSnapshot and (not Mounted);
+  SnapshotUnmountButton.Enabled := HasSnapshot and Mounted;
+  SnapshotMountsButton.Enabled := (FMounts <> nil) and (FMounts.Count > 0);
+end;
+
+
+procedure TMainForm.SnapshotMountButtonClick(Sender: TObject);
+begin
+  if (Trim(RepoEdit.Text) = '') or (Trim(FCommitHash) = '') then
+    Exit;
+
+  if not FMounts.IsMounted(RepoEdit.Text, FCommitHash) then
+    MountCurrentSnapshot;
+end;
+
+
+procedure TMainForm.SnapshotUnmountButtonClick(Sender: TObject);
+var
+  ErrorMessage: string;
+begin
+  if (Trim(RepoEdit.Text) = '') or (Trim(FCommitHash) = '') then
+    Exit;
+
+  if not FMounts.UnmountSnapshot(
+    RepoEdit.Text,
+    FCommitHash,
+    ErrorMessage
+  ) then
+  begin
+    if ErrorMessage <> '' then
+      ShowMessage(ErrorMessage);
+    Exit;
+  end;
+
+  RefreshMountList;
+  UpdateSnapshotMountToggle;
+end;
+
+procedure TMainForm.SnapshotMountsButtonClick(Sender: TObject);
+begin
+  MountedSnapshotsMenuItemClick(Sender);
+end;
+
+
 procedure TMainForm.MountCurrentSnapshot;
 var
-  Helper, MountPoint, RepoPath: string;
-  P: TProcess;
-  Existing: Integer;
+  MountPoint, ErrorMessage: string;
 begin
   if (Trim(RepoEdit.Text) = '') or (Trim(FCommitHash) = '') then
   begin
@@ -247,174 +312,76 @@ begin
     Exit;
   end;
 
-  RepoPath := ExpandFileName(RepoEdit.Text);
-  MountPoint := SnapshotMountPoint(RepoPath, FCommitHash);
-
-  Existing := FMountPoints.IndexOf(MountPoint);
-  if Existing >= 0 then
+  if not FMounts.MountSnapshot(
+    RepoEdit.Text,
+    FCommitHash,
+    MountPoint,
+    ErrorMessage
+  ) then
   begin
-    ShowMessage('Snapshot is already mounted at:' + LineEnding + MountPoint);
+    ShowMessage(ErrorMessage);
     Exit;
   end;
 
-  Helper := MountHelperPath;
-  if not FileExists(Helper) then
-  begin
-    ShowMessage('gtm-mount was not found:' + LineEnding + Helper +
-      LineEnding + LineEnding + 'Run make mount first.');
-    Exit;
-  end;
+  UpdateSnapshotMountToggle;
 
-  if not ForceDirectories(MountPoint) then
-  begin
-    ShowMessage('Could not create mountpoint:' + LineEnding + MountPoint);
-    Exit;
-  end;
-
-  P := TProcess.Create(nil);
-  try
-    P.Executable := Helper;
-    P.Parameters.Add(RepoPath);
-    P.Parameters.Add(FCommitHash);
-    P.Parameters.Add(MountPoint);
-    P.Options := [];
-    P.Execute;
-  finally
-    P.Free;
-  end;
-
-  FMountCommits.Add(FCommitHash);
-  FMountPoints.Add(MountPoint);
-
-  P := TProcess.Create(nil);
-  try
-    P.Executable := 'xdg-open';
-    P.Parameters.Add(MountPoint);
-    P.Options := [];
-    try
-      P.Execute;
-    except
-      { The mount is still valid even if no desktop file browser is available. }
-    end;
-  finally
-    P.Free;
-  end;
+  { The mount is still valid even if no desktop file browser is available. }
+  OpenPath(MountPoint, ErrorMessage);
 end;
 
-procedure TMainForm.UnmountIndex(Index: Integer);
-var
-  P: TProcess;
-  MountPoint: string;
-begin
-  if (Index < 0) or (Index >= FMountPoints.Count) then
-    Exit;
 
-  MountPoint := FMountPoints[Index];
-
-  P := TProcess.Create(nil);
-  try
-    P.Executable := 'fusermount3';
-    P.Parameters.Add('-u');
-    P.Parameters.Add(MountPoint);
-    P.Options := [poWaitOnExit];
-    P.Execute;
-
-    if P.ExitStatus <> 0 then
-    begin
-      ShowMessage('Could not unmount:' + LineEnding + MountPoint +
-        LineEnding + LineEnding +
-        'The mount may still be busy.');
-      Exit;
-    end;
-  finally
-    P.Free;
-  end;
-
-  FMountCommits.Delete(Index);
-  FMountPoints.Delete(Index);
-
-  if DirectoryExists(MountPoint) then
-    RemoveDir(MountPoint);
-
-  RefreshMountList;
-end;
-
-procedure TMainForm.UnmountAllSnapshots;
-var
-  I: Integer;
-  P: TProcess;
-  MountPoint: string;
-begin
-  for I := FMountPoints.Count - 1 downto 0 do
-  begin
-    MountPoint := FMountPoints[I];
-
-    P := TProcess.Create(nil);
-    try
-      P.Executable := 'fusermount3';
-      P.Parameters.Add('-u');
-      P.Parameters.Add(MountPoint);
-      P.Options := [poWaitOnExit];
-      try
-        P.Execute;
-      except
-        { Best-effort cleanup during shutdown. }
-      end;
-    finally
-      P.Free;
-    end;
-
-    if DirectoryExists(MountPoint) then
-      RemoveDir(MountPoint);
-
-    FMountCommits.Delete(I);
-    FMountPoints.Delete(I);
-  end;
-
-  RefreshMountList;
-end;
-
-procedure TMainForm.MountButtonClick(Sender: TObject);
+procedure TMainForm.MountSnapshotMenuItemClick(Sender: TObject);
 begin
   MountCurrentSnapshot;
 end;
 
 procedure TMainForm.MountOpenClick(Sender: TObject);
 var
-  P: TProcess;
+  ErrorMessage: string;
 begin
   if (FMountList = nil) or
      (FMountList.ItemIndex < 0) or
-     (FMountList.ItemIndex >= FMountPoints.Count) then
+     (FMountList.ItemIndex >= FMounts.Count) then
     Exit;
 
-  P := TProcess.Create(nil);
-  try
-    P.Executable := 'xdg-open';
-    P.Parameters.Add(FMountPoints[FMountList.ItemIndex]);
-    P.Options := [];
-    P.Execute;
-  finally
-    P.Free;
-  end;
+  if not OpenPath(
+    FMounts.MountPoints[FMountList.ItemIndex],
+    ErrorMessage
+  ) then
+    ShowMessage('Could not open mounted snapshot:' +
+      LineEnding + ErrorMessage);
 end;
 
+
 procedure TMainForm.MountUnmountClick(Sender: TObject);
+var
+  ErrorMessage: string;
 begin
   if FMountList = nil then
     Exit;
-  UnmountIndex(FMountList.ItemIndex);
+
+  if not FMounts.Unmount(FMountList.ItemIndex, ErrorMessage) then
+  begin
+    if ErrorMessage <> '' then
+      ShowMessage(ErrorMessage);
+    Exit;
+  end;
+
+  RefreshMountList;
+  UpdateSnapshotMountToggle;
 end;
 
 procedure TMainForm.MountUnmountAllClick(Sender: TObject);
 begin
-  UnmountAllSnapshots;
+  FMounts.UnmountAll;
+  RefreshMountList;
+  UpdateSnapshotMountToggle;
 end;
 
 procedure TMainForm.MountVisualDiffClick(Sender: TObject);
 var
   I, FirstIndex, SecondIndex, SelectedCount: Integer;
-  P: TProcess;
+  ErrorMessage: string;
 begin
   if FMountList = nil then
     Exit;
@@ -441,28 +408,24 @@ begin
     Exit;
   end;
 
-  P := TProcess.Create(nil);
-  try
-    P.Executable := 'meld';
-    P.Parameters.Add(FMountPoints[FirstIndex]);
-    P.Parameters.Add(FMountPoints[SecondIndex]);
-    P.Options := [];
-    try
-      P.Execute;
-    except
-      on E: Exception do
-        ShowMessage('Could not launch visual diff:' + LineEnding + E.Message);
-    end;
-  finally
-    P.Free;
-  end;
+  if not VisualDiff(
+    FMounts.MountPoints[FirstIndex],
+    FMounts.MountPoints[SecondIndex],
+    ErrorMessage
+  ) then
+    ShowMessage('Could not launch visual diff:' +
+      LineEnding + ErrorMessage);
 end;
 
-procedure TMainForm.MountsButtonClick(Sender: TObject);
+
+procedure TMainForm.MountedSnapshotsMenuItemClick(Sender: TObject);
 var
   Dialog: TForm;
   ButtonPanel: TPanel;
-  OpenButton, VisualDiffButton, UnmountButton, UnmountAllButton, CloseButton: TButton;
+  CloseButton: TButton;
+  MountPopup: TPopupMenu;
+  OpenItem, VisualDiffItem, SeparatorItem, UnmountItem,
+    UnmountAllItem: TMenuItem;
 begin
   Dialog := TForm.Create(Self);
   try
@@ -478,58 +441,63 @@ begin
     ButtonPanel.Height := 52;
     ButtonPanel.BevelOuter := bvNone;
 
-    OpenButton := TButton.Create(ButtonPanel);
-    OpenButton.Parent := ButtonPanel;
-    OpenButton.Caption := 'Open';
-    OpenButton.Left := 120;
-    OpenButton.Top := 10;
-    OpenButton.Width := 90;
-    OpenButton.OnClick := @MountOpenClick;
-
-    VisualDiffButton := TButton.Create(ButtonPanel);
-    VisualDiffButton.Parent := ButtonPanel;
-    VisualDiffButton.Caption := 'Visual Diff';
-    VisualDiffButton.Left := 216;
-    VisualDiffButton.Top := 10;
-    VisualDiffButton.Width := 110;
-    VisualDiffButton.OnClick := @MountVisualDiffClick;
-
-    UnmountButton := TButton.Create(ButtonPanel);
-    UnmountButton.Parent := ButtonPanel;
-    UnmountButton.Caption := 'Unmount';
-    UnmountButton.Left := 332;
-    UnmountButton.Top := 10;
-    UnmountButton.Width := 100;
-    UnmountButton.OnClick := @MountUnmountClick;
-
-    UnmountAllButton := TButton.Create(ButtonPanel);
-    UnmountAllButton.Parent := ButtonPanel;
-    UnmountAllButton.Caption := 'Unmount All';
-    UnmountAllButton.Left := 438;
-    UnmountAllButton.Top := 10;
-    UnmountAllButton.Width := 120;
-    UnmountAllButton.OnClick := @MountUnmountAllClick;
-
     CloseButton := TButton.Create(ButtonPanel);
     CloseButton.Parent := ButtonPanel;
     CloseButton.Caption := 'Close';
-    CloseButton.Left := 564;
+    CloseButton.Left := 614;
     CloseButton.Top := 10;
     CloseButton.Width := 90;
     CloseButton.ModalResult := mrClose;
+
+    MountPopup := TPopupMenu.Create(Dialog);
+
+    OpenItem := TMenuItem.Create(MountPopup);
+    OpenItem.Caption := 'Open';
+    OpenItem.OnClick := @MountOpenClick;
+    MountPopup.Items.Add(OpenItem);
+
+    VisualDiffItem := TMenuItem.Create(MountPopup);
+    VisualDiffItem.Caption := 'Visual Diff';
+    VisualDiffItem.OnClick := @MountVisualDiffClick;
+    MountPopup.Items.Add(VisualDiffItem);
+
+    SeparatorItem := TMenuItem.Create(MountPopup);
+    SeparatorItem.Caption := '-';
+    MountPopup.Items.Add(SeparatorItem);
+
+    UnmountItem := TMenuItem.Create(MountPopup);
+    UnmountItem.Caption := 'Unmount';
+    UnmountItem.OnClick := @MountUnmountClick;
+    MountPopup.Items.Add(UnmountItem);
+
+    UnmountAllItem := TMenuItem.Create(MountPopup);
+    UnmountAllItem.Caption := 'Unmount All';
+    UnmountAllItem.OnClick := @MountUnmountAllClick;
+    MountPopup.Items.Add(UnmountAllItem);
 
     FMountList := TListBox.Create(Dialog);
     FMountList.Parent := Dialog;
     FMountList.Align := alClient;
     FMountList.MultiSelect := True;
+    FMountList.PopupMenu := MountPopup;
+    FMountList.OnDblClick := @MountOpenClick;
 
     RefreshMountList;
     Dialog.ShowModal;
   finally
     FMountList := nil;
-      Dialog.Free;
+    Dialog.Free;
   end;
 end;
+
+
+procedure TMainForm.UnmountAllMenuItemClick(Sender: TObject);
+begin
+  FMounts.UnmountAll;
+  RefreshMountList;
+  UpdateSnapshotMountToggle;
+end;
+
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
@@ -554,7 +522,7 @@ begin
   FNavHoldTicks := 0;
   FNavRepeated := False;
   FNavKey := 0;
-  FDraggingVerticalSliderline := False;
+  FDraggingTimeline := False;
   FPendingTimelinePosition := 0;
   FDraggingVerticalSlider := False;
   FPendingVerticalPosition := 0;
@@ -564,8 +532,7 @@ begin
   FHistoryList := nil;
   FHistoryPath := '';
   FHistorySelectionUpdating := False;
-  FMountCommits := TStringList.Create;
-  FMountPoints := TStringList.Create;
+  FMounts := TGTMMountManager.Create;
   FMountList := nil;
   FNavTimer := TTimer.Create(Self);
   FNavTimer.Enabled := False;
@@ -592,6 +559,7 @@ begin
   PathLabel.Caption := 'Path: /';
   FCommitHash := '';
   FCurrentPath := '';
+  UpdateSnapshotMountToggle;
   PrevButton.Enabled := False;
   NextButton.Enabled := False;
   TimeTrackBar.Enabled := False;
@@ -607,15 +575,59 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
-  UnmountAllSnapshots;
-  FMountPoints.Free;
-  FMountCommits.Free;
+  FMounts.UnmountAll;
+  FMounts.Free;
   FDeletedEntries.Free;
   FEntryStates.Free;
   FTagNames.Free;
   FTagCommits.Free;
   FBranchIndex.Free;
   FTimeline.Free;
+end;
+
+procedure TMainForm.OpenRepositoryMenuItemClick(Sender: TObject);
+begin
+  BrowseButtonClick(Sender);
+end;
+
+procedure TMainForm.QuitMenuItemClick(Sender: TObject);
+begin
+  Close;
+end;
+
+procedure TMainForm.FirstCommitMenuItemClick(Sender: TObject);
+begin
+  FirstButtonClick(Sender);
+end;
+
+procedure TMainForm.PreviousCommitMenuItemClick(Sender: TObject);
+begin
+  PrevButtonClick(Sender);
+end;
+
+procedure TMainForm.NextCommitMenuItemClick(Sender: TObject);
+begin
+  NextButtonClick(Sender);
+end;
+
+procedure TMainForm.LastCommitMenuItemClick(Sender: TObject);
+begin
+  LastButtonClick(Sender);
+end;
+
+procedure TMainForm.SelectTagMenuItemClick(Sender: TObject);
+begin
+  TagButtonClick(Sender);
+end;
+
+procedure TMainForm.AboutMenuItemClick(Sender: TObject);
+begin
+  MessageDlg(
+    'Git Time Machine' + LineEnding +
+    'Version ' + GTMVersion + LineEnding + LineEnding +
+    'Browse Git history as filesystem snapshots.',
+    mtInformation, [mbOK], 0
+  );
 end;
 
 procedure TMainForm.BrowseButtonClick(Sender: TObject);
@@ -977,7 +989,7 @@ end;
 
 procedure TMainForm.BuildBranchTimeline(const CenterCommit: string);
 var
-  CenterIndex, StartIndex, EndIndex, I, HalfWindow: Integer;
+  CenterIndex: Integer;
 begin
   if FBranchIndex.Count = 0 then
     BuildBranchIndex;
@@ -985,35 +997,16 @@ begin
   if FBranchIndex.Count = 0 then
     Exit;
 
-  CenterIndex := FBranchIndex.IndexOf(CenterCommit);
-  if CenterIndex < 0 then
-    CenterIndex := FBranchIndex.Count - 1;
+  BuildTimelineSlice(
+    FBranchIndex,
+    CenterCommit,
+    FWindowSize,
+    FTimeline,
+    CenterIndex,
+    FWindowPredecessor
+  );
 
   FCurrentBranchPosition := CenterIndex;
-
-  HalfWindow := FWindowSize div 2;
-  StartIndex := CenterIndex - HalfWindow;
-  if StartIndex < 0 then
-    StartIndex := 0;
-
-  EndIndex := StartIndex + FWindowSize - 1;
-  if EndIndex >= FBranchIndex.Count then
-  begin
-    EndIndex := FBranchIndex.Count - 1;
-    StartIndex := EndIndex - FWindowSize + 1;
-    if StartIndex < 0 then
-      StartIndex := 0;
-  end;
-
-  FTimeline.Clear;
-  for I := StartIndex to EndIndex do
-    FTimeline.Add(FBranchIndex[I]);
-
-  if StartIndex > 0 then
-    FWindowPredecessor := FBranchIndex[StartIndex - 1]
-  else
-    FWindowPredecessor := '';
-
 
   FOldestCommitTime := CommitUnixTime(
     RepoEdit.Text,
@@ -1048,19 +1041,10 @@ begin
 end;
 
 procedure TMainForm.EnsureCurrentPathExists;
-var
-  P: Integer;
 begin
-  while (FCurrentPath <> '') and
-        (not DirectoryExistsAtCommit(RepoEdit.Text, FCommitHash, FCurrentPath)) do
-  begin
-    P := LastDelimiter('/', FCurrentPath);
-    if P = 0 then
-      FCurrentPath := ''
-    else
-      FCurrentPath := Copy(FCurrentPath, 1, P - 1);
-  end;
+  EnsurePathExistsAtCommit(RepoEdit.Text, FCommitHash, FCurrentPath);
 end;
+
 
 function TMainForm.CurrentCommitToVerticalSlider: Integer;
 begin
@@ -1247,25 +1231,13 @@ end;
 
 procedure TMainForm.SelectCommitHash(const CommitHash: string);
 var
-  I, J: Integer;
+  I: Integer;
   FullHash: string;
 begin
   if CommitHash = '' then
     Exit;
 
-  FullHash := CommitHash;
-
-  { History rows use abbreviated hashes.  Normalize an abbreviation against
-    the full branch index before doing exact timeline lookups. }
-  if Length(FullHash) < 40 then
-  begin
-    for J := 0 to FBranchIndex.Count - 1 do
-      if Pos(LowerCase(FullHash), LowerCase(FBranchIndex[J])) = 1 then
-      begin
-        FullHash := FBranchIndex[J];
-        Break;
-      end;
-  end;
+  FullHash := ResolveCommitAbbreviation(FBranchIndex, CommitHash);
 
   if FTimeline.IndexOf(FullHash) < 0 then
     BuildBranchTimeline(FullHash);
@@ -1329,6 +1301,7 @@ begin
   LoadCurrentDirectory;
   UpdateTimelineControls;
   UpdateTagSelection;
+  UpdateSnapshotMountToggle;
 end;
 
 procedure TMainForm.UpdateForkInfo;
@@ -1722,7 +1695,7 @@ begin
   if Button <> mbLeft then
     Exit;
 
-  FDraggingVerticalSliderline := True;
+  FDraggingTimeline := True;
   FPendingTimelinePosition := TimeTrackBar.Position;
 end;
 
@@ -1734,10 +1707,10 @@ begin
   if Button <> mbLeft then
     Exit;
 
-  if not FDraggingVerticalSliderline then
+  if not FDraggingTimeline then
     Exit;
 
-  FDraggingVerticalSliderline := False;
+  FDraggingTimeline := False;
   FPendingTimelinePosition := TimeTrackBar.Position;
 
   CommitHash := ResolveSliderCommit(FPendingTimelinePosition);
@@ -1749,7 +1722,7 @@ procedure TMainForm.TimeTrackBarKeyUp(Sender: TObject;
 var
   CommitHash: string;
 begin
-  if FLoadingTimeline or FDraggingVerticalSliderline then
+  if FLoadingTimeline or FDraggingTimeline then
     Exit;
 
   FPendingTimelinePosition := TimeTrackBar.Position;
@@ -1768,43 +1741,8 @@ begin
   FPendingTimelinePosition := TimeTrackBar.Position;
 end;
 
-function TMainForm.EntryNameFromObject(const S: string): string;
-var
-  P1, P2: Integer;
-begin
-  P1 := Pos(#9, S);
-  if P1 = 0 then
-    Exit('');
-  P2 := Pos(#9, Copy(S, P1 + 1, MaxInt));
-  if P2 = 0 then
-    Exit('');
-  P2 := P1 + P2;
-  Result := Copy(S, P2 + 1, MaxInt);
-end;
 
-function TMainForm.EntryHashFromObject(const S: string): string;
-var
-  P1, P2: Integer;
-begin
-  P1 := Pos(#9, S);
-  if P1 = 0 then
-    Exit('');
-  P2 := Pos(#9, Copy(S, P1 + 1, MaxInt));
-  if P2 = 0 then
-    Exit('');
-  Result := Copy(S, P1 + 1, P2 - 1);
-end;
 
-function TMainForm.FindObjectByName(Objects: TStrings;
-  const EntryName: string): string;
-var
-  I: Integer;
-begin
-  Result := '';
-  for I := 0 to Objects.Count - 1 do
-    if EntryNameFromObject(Objects[I]) = EntryName then
-      Exit(Objects[I]);
-end;
 
 function TMainForm.PredecessorCommit(const CommitHash: string): string;
 var
@@ -1822,62 +1760,17 @@ begin
 end;
 
 procedure TMainForm.BuildEntryStates(const FromCommit, ToCommit: string);
-var
-  OldObjects, NewObjects: TStringList;
-  I: Integer;
-  NewObject, OldObject, EntryName, NewHash, OldHash: string;
 begin
-  FEntryStates.Clear;
-  FDeletedEntries.Clear;
-
-  if ToCommit = '' then
-    Exit;
-
-  NewObjects := TStringList.Create;
-  OldObjects := TStringList.Create;
-  try
-    ListDirectoryObjects(RepoEdit.Text, ToCommit, FCurrentPath, NewObjects);
-
-    if (FromCommit <> '') and
-       DirectoryExistsAtCommit(RepoEdit.Text, FromCommit, FCurrentPath) then
-      ListDirectoryObjects(RepoEdit.Text, FromCommit, FCurrentPath, OldObjects);
-
-    for I := 0 to NewObjects.Count - 1 do
-    begin
-      NewObject := NewObjects[I];
-      EntryName := EntryNameFromObject(NewObject);
-      NewHash := EntryHashFromObject(NewObject);
-      OldObject := FindObjectByName(OldObjects, EntryName);
-
-      if OldObject = '' then
-        FEntryStates.Values[EntryName] := 'added'
-      else
-      begin
-        OldHash := EntryHashFromObject(OldObject);
-        if OldHash <> NewHash then
-          FEntryStates.Values[EntryName] := 'modified'
-        else
-          FEntryStates.Values[EntryName] := 'unchanged';
-      end;
-    end;
-
-    for I := 0 to OldObjects.Count - 1 do
-    begin
-      OldObject := OldObjects[I];
-      EntryName := EntryNameFromObject(OldObject);
-
-      if FindObjectByName(NewObjects, EntryName) = '' then
-      begin
-        if Pos('tree' + #9, OldObject) = 1 then
-          EntryName := EntryName + '/';
-        FDeletedEntries.Add(EntryName);
-      end;
-    end;
-  finally
-    OldObjects.Free;
-    NewObjects.Free;
-  end;
+  BuildDirectoryEntryStates(
+    RepoEdit.Text,
+    FromCommit,
+    ToCommit,
+    FCurrentPath,
+    FEntryStates,
+    FDeletedEntries
+  );
 end;
+
 
 procedure TMainForm.RefreshCurrentDirectory;
 begin
@@ -2192,8 +2085,7 @@ end;
 
 procedure TMainForm.VisualDiffMenuItemClick(Sender: TObject);
 var
-  PathName, PrevCommit, OldFile, NewFile: string;
-  P: TProcess;
+  PathName, PrevCommit, OldFile, NewFile, ErrorMessage: string;
 begin
   PathName := SelectedHistoricalPath;
   if PathName = '' then
@@ -2206,22 +2098,9 @@ begin
   MaterializeTempFile(PrevCommit, PathName, OldFile);
   MaterializeTempFile(FCommitHash, PathName, NewFile);
 
-  P := TProcess.Create(nil);
-  try
-    P.Executable := 'meld';
-    P.Parameters.Add(OldFile);
-    P.Parameters.Add(NewFile);
-    P.Options := [];
-    try
-      P.Execute;
-    except
-      on E: Exception do
-        MessageDlg('Unable to launch visual diff: ' + E.Message,
-          mtError, [mbOK], 0);
-    end;
-  finally
-    P.Free;
-  end;
+  if not VisualDiff(OldFile, NewFile, ErrorMessage) then
+    MessageDlg('Unable to launch visual diff: ' + ErrorMessage,
+      mtError, [mbOK], 0);
 end;
 
 
@@ -2403,9 +2282,8 @@ end;
 
 procedure TMainForm.HistoryVisualDiffMenuItemClick(Sender: TObject);
 var
-  I, Sel1, Sel2, TempIndex, P1, P2: Integer;
-  S, Hash1, Hash2, OldFile, NewFile: string;
-  P: TProcess;
+  I, Sel1, Sel2, TempIndex: Integer;
+  Hash1, Hash2, OldFile, NewFile, ErrorMessage: string;
 
   function HashFromLine(const Line: string): string;
   var
@@ -2482,22 +2360,9 @@ begin
   MaterializeTempFile(Hash1, FHistoryPath, OldFile);
   MaterializeTempFile(Hash2, FHistoryPath, NewFile);
 
-  P := TProcess.Create(nil);
-  try
-    P.Executable := 'meld';
-    P.Parameters.Add(OldFile);
-    P.Parameters.Add(NewFile);
-    P.Options := [];
-    try
-      P.Execute;
-    except
-      on E: Exception do
-        MessageDlg('Unable to launch visual diff: ' + E.Message,
-          mtError, [mbOK], 0);
-    end;
-  finally
-    P.Free;
-  end;
+  if not VisualDiff(OldFile, NewFile, ErrorMessage) then
+    MessageDlg('Unable to launch visual diff: ' + ErrorMessage,
+      mtError, [mbOK], 0);
 end;
 
 procedure TMainForm.TreeListDblClick(Sender: TObject);

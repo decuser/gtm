@@ -63,5 +63,8 @@
       </Debugging>
       <LinkSmart Value="True"/>
     </Linking>
+    <Other>
+      <CustomOptions Value="-vm5024"/>
+    </Other>
   </CompilerOptions>
 </CONFIG>

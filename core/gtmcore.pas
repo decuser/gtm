@@ -23,6 +23,16 @@ function CountCommitsAfter(const Repo, BaseCommit, BranchName: string): Integer;
 function BranchTip(const Repo, BranchName: string): string;
 function BranchRoot(const Repo, BranchName: string): string;
 
+function ResolveCommitAbbreviation(Commits: TStrings;
+  const CommitHash: string): string;
+procedure EnsurePathExistsAtCommit(const Repo, CommitHash: string;
+  var PathArg: string);
+procedure BuildDirectoryEntryStates(const Repo, FromCommit, ToCommit,
+  PathArg: string; EntryStates, DeletedEntries: TStrings);
+procedure BuildTimelineSlice(BranchIndex: TStrings; const CenterCommit: string;
+  WindowSize: Integer; Timeline: TStrings; out CenterIndex: Integer;
+  out WindowPredecessor: string);
+
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);
 function DirectoryExistsAtCommit(const Repo, CommitHash, PathArg: string): Boolean;
 procedure ListDirectoryEntries(const Repo, CommitHash, PathArg: string;
@@ -51,6 +61,8 @@ var
   Buffer: array[0..BufferSize - 1] of Byte;
   I, N: Integer;
 begin
+  FillChar(Buffer, SizeOf(Buffer), 0);
+
   P := TProcess.Create(nil);
   SSOut := TStringStream.Create('');
   SSErr := TStringStream.Create('');
@@ -501,8 +513,9 @@ begin
   if Trim(TagName) = '' then
     Exit;
 
-  { ^{commit} peels annotated tags and also verifies that the final target
-    is a commit.  Lightweight tags resolve directly. }
+  { rev-parse with the commit peel suffix dereferences annotated tags and
+    verifies that the final target is a commit. Lightweight tags resolve
+    directly. }
   if not RunGit(Repo, ['rev-parse', TagName + '^{commit}'],
     OutText, ErrText, Code) then
     Exit;
@@ -584,6 +597,172 @@ begin
     Result := Trim(Copy(OutText, 1, NL - 1))
   else
     Result := OutText;
+end;
+
+
+function EntryNameFromObject(const S: string): string;
+var
+  P1, P2: Integer;
+begin
+  P1 := Pos(#9, S);
+  if P1 = 0 then
+    Exit('');
+  P2 := Pos(#9, Copy(S, P1 + 1, MaxInt));
+  if P2 = 0 then
+    Exit('');
+  P2 := P1 + P2;
+  Result := Copy(S, P2 + 1, MaxInt);
+end;
+
+function EntryHashFromObject(const S: string): string;
+var
+  P1, P2: Integer;
+begin
+  P1 := Pos(#9, S);
+  if P1 = 0 then
+    Exit('');
+  P2 := Pos(#9, Copy(S, P1 + 1, MaxInt));
+  if P2 = 0 then
+    Exit('');
+  Result := Copy(S, P1 + 1, P2 - 1);
+end;
+
+function FindObjectByName(Objects: TStrings;
+  const EntryName: string): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to Objects.Count - 1 do
+    if EntryNameFromObject(Objects[I]) = EntryName then
+      Exit(Objects[I]);
+end;
+
+function ResolveCommitAbbreviation(Commits: TStrings;
+  const CommitHash: string): string;
+var
+  I: Integer;
+begin
+  Result := CommitHash;
+  if (CommitHash = '') or (Length(CommitHash) >= 40) then
+    Exit;
+
+  for I := 0 to Commits.Count - 1 do
+    if Pos(LowerCase(CommitHash), LowerCase(Commits[I])) = 1 then
+      Exit(Commits[I]);
+end;
+
+procedure EnsurePathExistsAtCommit(const Repo, CommitHash: string;
+  var PathArg: string);
+var
+  P: Integer;
+begin
+  while (PathArg <> '') and
+        (not DirectoryExistsAtCommit(Repo, CommitHash, PathArg)) do
+  begin
+    P := LastDelimiter('/', PathArg);
+    if P = 0 then
+      PathArg := ''
+    else
+      PathArg := Copy(PathArg, 1, P - 1);
+  end;
+end;
+
+procedure BuildDirectoryEntryStates(const Repo, FromCommit, ToCommit,
+  PathArg: string; EntryStates, DeletedEntries: TStrings);
+var
+  OldObjects, NewObjects: TStringList;
+  I: Integer;
+  NewObject, OldObject, EntryName, NewHash, OldHash: string;
+begin
+  EntryStates.Clear;
+  DeletedEntries.Clear;
+
+  if ToCommit = '' then
+    Exit;
+
+  NewObjects := TStringList.Create;
+  OldObjects := TStringList.Create;
+  try
+    ListDirectoryObjects(Repo, ToCommit, PathArg, NewObjects);
+
+    if (FromCommit <> '') and
+       DirectoryExistsAtCommit(Repo, FromCommit, PathArg) then
+      ListDirectoryObjects(Repo, FromCommit, PathArg, OldObjects);
+
+    for I := 0 to NewObjects.Count - 1 do
+    begin
+      NewObject := NewObjects[I];
+      EntryName := EntryNameFromObject(NewObject);
+      NewHash := EntryHashFromObject(NewObject);
+      OldObject := FindObjectByName(OldObjects, EntryName);
+
+      if OldObject = '' then
+        EntryStates.Values[EntryName] := 'added'
+      else
+      begin
+        OldHash := EntryHashFromObject(OldObject);
+        if OldHash <> NewHash then
+          EntryStates.Values[EntryName] := 'modified'
+        else
+          EntryStates.Values[EntryName] := 'unchanged';
+      end;
+    end;
+
+    for I := 0 to OldObjects.Count - 1 do
+    begin
+      OldObject := OldObjects[I];
+      EntryName := EntryNameFromObject(OldObject);
+
+      if FindObjectByName(NewObjects, EntryName) = '' then
+      begin
+        if Pos('tree' + #9, OldObject) = 1 then
+          EntryName := EntryName + '/';
+        DeletedEntries.Add(EntryName);
+      end;
+    end;
+  finally
+    OldObjects.Free;
+    NewObjects.Free;
+  end;
+end;
+
+procedure BuildTimelineSlice(BranchIndex: TStrings; const CenterCommit: string;
+  WindowSize: Integer; Timeline: TStrings; out CenterIndex: Integer;
+  out WindowPredecessor: string);
+var
+  StartIndex, EndIndex, I, HalfWindow: Integer;
+begin
+  Timeline.Clear;
+  WindowPredecessor := '';
+  CenterIndex := -1;
+
+  if BranchIndex.Count = 0 then
+    Exit;
+
+  CenterIndex := BranchIndex.IndexOf(CenterCommit);
+  if CenterIndex < 0 then
+    CenterIndex := BranchIndex.Count - 1;
+
+  HalfWindow := WindowSize div 2;
+  StartIndex := CenterIndex - HalfWindow;
+  if StartIndex < 0 then
+    StartIndex := 0;
+
+  EndIndex := StartIndex + WindowSize - 1;
+  if EndIndex >= BranchIndex.Count then
+  begin
+    EndIndex := BranchIndex.Count - 1;
+    StartIndex := EndIndex - WindowSize + 1;
+    if StartIndex < 0 then
+      StartIndex := 0;
+  end;
+
+  for I := StartIndex to EndIndex do
+    Timeline.Add(BranchIndex[I]);
+
+  if StartIndex > 0 then
+    WindowPredecessor := BranchIndex[StartIndex - 1];
 end;
 
 procedure ShowSnapshot(const Repo, BranchName, RequestedAt, CommitHash: string);

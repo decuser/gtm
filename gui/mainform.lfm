@@ -7,8 +7,9 @@ object MainForm: TMainForm
   ClientHeight = 915
   ClientWidth = 1356
   DesignTimePPI = 144
-  Position = poScreenCenter
   KeyPreview = True
+  Menu = MainMenu
+  Position = poScreenCenter
   LCLVersion = '4.8.0.0'
   OnCreate = FormCreate
   OnDestroy = FormDestroy
@@ -79,7 +80,7 @@ object MainForm: TMainForm
     Top = 82
     Width = 36
     Caption = '▼'
-    TabOrder = 4
+    TabOrder = 5
     OnClick = TagButtonClick
   end
   object TimeLabel: TLabel
@@ -104,25 +105,46 @@ object MainForm: TMainForm
     Width = 180
     Caption = 'Snapshot: not loaded'
   end
-  object MountButton: TButton
-    Left = 1008
-    Height = 45
-    Top = 134
-    Width = 150
-    Caption = 'Mount Snapshot'
-    OnClick = MountButtonClick
-    TabOrder = 5
+  object SnapshotMountButton: TSpeedButton
+    Left = 1048
+    Height = 38
+    Hint = 'Mount Snapshot'
+    Top = 144
+    Width = 28
+    Caption = '▶'
+    Flat = True
+    Font.Height = -22
+    ShowHint = True
+    ParentFont = False
+    ParentShowHint = False
+    OnClick = SnapshotMountButtonClick
   end
-  object MountsButton: TButton
-    Left = 1170
-    Height = 45
-    Top = 134
-    Width = 156
-    Caption = 'Mounts...'
-    OnClick = MountsButtonClick
-    TabOrder = 6
+  object SnapshotUnmountButton: TSpeedButton
+    Left = 1080
+    Height = 38
+    Hint = 'Unmount Snapshot'
+    Top = 144
+    Width = 28
+    Caption = '■'
+    Flat = True
+    Font.Height = -22
+    ShowHint = True
+    ParentFont = False
+    ParentShowHint = False
+    OnClick = SnapshotUnmountButtonClick
   end
-
+  object SnapshotMountsButton: TSpeedButton
+    Left = 1112
+    Height = 38
+    Hint = 'Mounted Snapshots'
+    Top = 144
+    Width = 24
+    Caption = '▼'
+    Flat = True
+    ShowHint = True
+    ParentShowHint = False
+    OnClick = SnapshotMountsButtonClick
+  end
   object FirstButton: TButton
     Left = 24
     Height = 45
@@ -163,24 +185,18 @@ object MainForm: TMainForm
     Height = 18
     Top = 230
     Width = 18
-    AutoSize = False
     Alignment = taCenter
+    AutoSize = False
     Layout = tlCenter
-    Caption = ''
-    ShowHint = False
-    Transparent = True
   end
   object MergeMarkerLabel: TLabel
     Left = 150
     Height = 18
     Top = 230
     Width = 18
-    AutoSize = False
     Alignment = taCenter
+    AutoSize = False
     Layout = tlCenter
-    Caption = ''
-    ShowHint = False
-    Transparent = True
   end
   object NextButton: TButton
     Left = 1212
@@ -292,12 +308,75 @@ object MainForm: TMainForm
   object SelectDirectoryDialog1: TSelectDirectoryDialog
     Title = 'Select Git Repository'
     Left = 1224
-    Top = 120
+    Top = 280
+  end
+  object MainMenu: TMainMenu
+    Left = 936
+    Top = 280
+    object FileMenu: TMenuItem
+      Caption = 'File'
+      object OpenRepositoryMenuItem: TMenuItem
+        Caption = 'Open Repository...'
+        OnClick = OpenRepositoryMenuItemClick
+      end
+      object QuitMenuItem: TMenuItem
+        Caption = 'Quit'
+        OnClick = QuitMenuItemClick
+      end
+    end
+    object NavigateMenu: TMenuItem
+      Caption = 'Navigate'
+      object FirstCommitMenuItem: TMenuItem
+        Caption = 'First Commit'
+        OnClick = FirstCommitMenuItemClick
+      end
+      object PreviousCommitMenuItem: TMenuItem
+        Caption = 'Previous Commit'
+        OnClick = PreviousCommitMenuItemClick
+      end
+      object NextCommitMenuItem: TMenuItem
+        Caption = 'Next Commit'
+        OnClick = NextCommitMenuItemClick
+      end
+      object LastCommitMenuItem: TMenuItem
+        Caption = 'Last Commit'
+        OnClick = LastCommitMenuItemClick
+      end
+      object SelectTagMenuItem: TMenuItem
+        Caption = 'Select Tag...'
+        OnClick = SelectTagMenuItemClick
+      end
+    end
+    object SnapshotMenu: TMenuItem
+      Caption = 'Snapshot'
+      object MountSnapshotMenuItem: TMenuItem
+        Caption = 'Mount Snapshot'
+        OnClick = MountSnapshotMenuItemClick
+      end
+      object MountedSnapshotsMenuItem: TMenuItem
+        Caption = 'Mounted Snapshots...'
+        OnClick = MountedSnapshotsMenuItemClick
+      end
+      object SnapshotSeparatorMenuItem: TMenuItem
+        Caption = '-'
+      end
+      object UnmountAllMenuItem: TMenuItem
+        Caption = 'Unmount All'
+        OnClick = UnmountAllMenuItemClick
+      end
+    end
+    object HelpMenu: TMenuItem
+      Caption = 'Help'
+      object AboutMenuItem: TMenuItem
+        Caption = 'About...'
+        OnClick = AboutMenuItemClick
+      end
+    end
   end
   object FilePopup: TPopupMenu
     OnPopup = FilePopupPopup
     Left = 1056
-    Top = 120
+    Top = 272
     object OpenMenuItem: TMenuItem
       Caption = 'Open'
       OnClick = OpenMenuItemClick
@@ -317,7 +396,7 @@ object MainForm: TMainForm
   end
   object SaveDialog: TSaveDialog
     Options = [ofOverwritePrompt, ofEnableSizing]
-    Left = 1116
-    Top = 120
+    Left = 1144
+    Top = 288
   end
 end
