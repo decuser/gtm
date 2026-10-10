@@ -656,9 +656,15 @@ end;
 
 procedure TMainForm.PopulateTags;
 begin
+  TagEdit.Text := '(none)';
+  FState.TagCommits.Clear;
+  FState.TagNames.Clear;
+
+  if Trim(RepoEdit.Text) = '' then
+    Exit;
+
   SetRepository(FState, Trim(RepoEdit.Text));
   PopulateStateTags(FState, BranchEdit.Items);
-  TagEdit.Text := '(none)';
 end;
 
 procedure TMainForm.UpdateTagSelection;
@@ -857,6 +863,12 @@ end;
 
 procedure TMainForm.BuildBranchIndex;
 begin
+  FState.BranchIndex.Clear;
+  if Trim(RepoEdit.Text) = '' then
+    Exit;
+  if Trim(BranchEdit.Text) = '' then
+    Exit;
+
   SetRepository(FState, Trim(RepoEdit.Text));
   SetBranch(FState, Trim(BranchEdit.Text));
   BuildStateBranchIndex(FState);
@@ -915,6 +927,8 @@ var
 begin
   Result := 0;
 
+  if Trim(RepoEdit.Text) = '' then
+    Exit;
   if FState.BranchIndex.Count = 0 then
     Exit;
 
