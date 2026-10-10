@@ -12,7 +12,7 @@ SOURCE_DIR_NAME := $(notdir $(CURDIR))
 BASELINE_NAME := gtm-baseline-$(VERSION)
 BASELINE_ARCHIVE := $(DIST_PARENT)/$(BASELINE_NAME).tar.gz
 
-.PHONY: all cli gui mount clean baseline version
+.PHONY: all cli gui mount clean repo-clean baseline version
 
 all: cli
 
@@ -35,6 +35,13 @@ mount:
 clean:
 	rm -rf bin
 	rm -rf gui/lib
+	rm -rf gui/backup
+	rm -f gui/*.lps gui/*.res
+
+# One-time source-control cleanup: stop tracking generated/editor files.
+repo-clean:
+	git rm -r --cached --ignore-unmatch bin gui/lib gui/backup
+	git rm --cached --ignore-unmatch gui/*.lps gui/*.res
 
 baseline:
 	@set -eu; \

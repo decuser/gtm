@@ -653,59 +653,10 @@ end;
 
 
 procedure TMainForm.PopulateTags;
-var
-  Tags, Reachable, CandidatePath: TStringList;
-  TagName, CommitHash, BranchName: string;
-  I, J: Integer;
 begin
-  try
-    FState.TagNames.Clear;
-    FState.TagCommits.Clear;
-    FState.TagNames.Add('(none)');
-    FState.TagCommits.Add('');
-    TagEdit.Text := '(none)';
-
-    if Trim(RepoEdit.Text) = '' then
-      Exit;
-
-    Tags := TStringList.Create;
-    Reachable := TStringList.Create;
-    CandidatePath := TStringList.Create;
-    try
-      { Tags are browsable only when their commit lies on at least one
-        actual GTM branch path.  Build that reachable set once. }
-      Reachable.Sorted := True;
-      Reachable.Duplicates := dupIgnore;
-
-      for I := 0 to BranchEdit.Items.Count - 1 do
-      begin
-        BranchName := Trim(BranchEdit.Items[I]);
-        if BranchName = '' then
-          Continue;
-
-        BuildTimeline(RepoEdit.Text, BranchName, CandidatePath);
-        for J := 0 to CandidatePath.Count - 1 do
-          Reachable.Add(Trim(CandidatePath[J]));
-      end;
-
-      ListTags(RepoEdit.Text, Tags);
-      for I := Tags.Count - 1 downto 0 do
-      begin
-        TagName := Trim(Tags[I]);
-        CommitHash := ResolveTagCommit(RepoEdit.Text, TagName);
-        if (CommitHash <> '') and (Reachable.IndexOf(CommitHash) >= 0) then
-        begin
-          FState.TagNames.Add(TagName);
-          FState.TagCommits.Add(CommitHash);
-        end;
-      end;
-    finally
-      CandidatePath.Free;
-      Reachable.Free;
-      Tags.Free;
-    end;
-  finally
-    end;
+  SetRepository(FState, Trim(RepoEdit.Text));
+  PopulateStateTags(FState, BranchEdit.Items);
+  TagEdit.Text := '(none)';
 end;
 
 procedure TMainForm.UpdateTagSelection;
@@ -713,19 +664,12 @@ var
   I: Integer;
 begin
   TagEdit.Text := '(none)';
-
   if FState.CommitHash = '' then
-  begin
     Exit;
-  end;
 
-  for I := 1 to FState.TagCommits.Count - 1 do
-    if SameText(FState.TagCommits[I], FState.CommitHash) then
-    begin
-      TagEdit.Text := FState.TagNames[I];
-      Exit;
-    end;
-
+  I := StateTagIndexForCommit(FState, FState.CommitHash);
+  if I > 0 then
+    TagEdit.Text := FState.TagNames[I];
 end;
 
 procedure TMainForm.TagChooserAccept(Sender: TObject);
@@ -745,7 +689,6 @@ var
   SelectButton, CancelButton: TButton;
   SelectedIndex, BranchIndex: Integer;
   TargetCommit: string;
-  CandidatePath: TStringList;
   FoundBranch: Boolean;
 begin
   Chooser := TForm.Create(Self);
@@ -804,37 +747,17 @@ begin
 
     TargetCommit := FState.TagCommits[SelectedIndex];
 
-    FoundBranch := FState.BranchIndex.IndexOf(TargetCommit) >= 0;
+    FoundBranch := SelectStateBranchForCommit(
+      FState, BranchEdit.Items, TargetCommit, BranchIndex
+    );
 
-    if not FoundBranch then
+    if FoundBranch and (BranchIndex >= 0) then
     begin
-      CandidatePath := TStringList.Create;
+      FLoadingBranches := True;
       try
-        for BranchIndex := 0 to BranchEdit.Items.Count - 1 do
-        begin
-          BuildTimeline(
-            RepoEdit.Text,
-            BranchEdit.Items[BranchIndex],
-            CandidatePath
-          );
-
-          if CandidatePath.IndexOf(TargetCommit) >= 0 then
-          begin
-            FLoadingBranches := True;
-            try
-              BranchEdit.ItemIndex := BranchIndex;
-            finally
-              FLoadingBranches := False;
-            end;
-
-            FState.BranchIndex.Assign(CandidatePath);
-            FState.BranchCommitCount := FState.BranchIndex.Count;
-                      FoundBranch := True;
-            Break;
-          end;
-        end;
+        BranchEdit.ItemIndex := BranchIndex;
       finally
-        CandidatePath.Free;
+        FLoadingBranches := False;
       end;
     end;
 
@@ -867,23 +790,13 @@ begin
     Exit;
 
   SetRepository(FState, Trim(RepoEdit.Text));
-  SetBranch(FState, Trim(BranchEdit.Text));
 
   Screen.Cursor := crHourGlass;
   try
-      FState.BranchIndex.Clear;
-    BuildBranchIndex;
-
-    if FState.BranchIndex.Count = 0 then
+    if not SelectStateBranch(FState, Trim(BranchEdit.Text), TargetCommit) then
       Exit;
 
-    { Selecting a branch selects its GTM path and lands at the latest point
-      on that path.  A rejoined branch therefore lands on the shared
-      continuation, not on the old raw Git branch ref. }
-    TargetCommit := FState.BranchIndex[FState.BranchIndex.Count - 1];
-
     BuildBranchTimeline(TargetCommit);
-
     FState.CommitHash := '';
     SelectCommitHash(TargetCommit);
   finally
@@ -944,40 +857,14 @@ procedure TMainForm.BuildBranchIndex;
 begin
   SetRepository(FState, Trim(RepoEdit.Text));
   SetBranch(FState, Trim(BranchEdit.Text));
-  FState.BranchIndex.Clear;
-  BuildTimeline(RepoEdit.Text, BranchEdit.Text, FState.BranchIndex);
-  FState.BranchCommitCount := FState.BranchIndex.Count;
+  BuildStateBranchIndex(FState);
 end;
 
 procedure TMainForm.BuildBranchTimeline(const CenterCommit: string);
-var
-  CenterIndex: Integer;
 begin
-  if FState.BranchIndex.Count = 0 then
-    BuildBranchIndex;
-
+  BuildStateTimeline(FState, CenterCommit);
   if FState.BranchIndex.Count = 0 then
     Exit;
-
-  BuildTimelineSlice(
-    FState.BranchIndex,
-    CenterCommit,
-    FState.WindowSize,
-    FState.Timeline,
-    CenterIndex,
-    FState.WindowPredecessor
-  );
-
-  FState.CurrentBranchPosition := CenterIndex;
-
-  FState.OldestCommitTime := CommitUnixTime(
-    RepoEdit.Text,
-    FState.BranchIndex[0]
-  );
-  FState.NewestCommitTime := CommitUnixTime(
-    RepoEdit.Text,
-    FState.BranchIndex[FState.BranchIndex.Count - 1]
-  );
 
   UpdateTimeRailLabels;
 
@@ -990,10 +877,9 @@ begin
 
     VerticalTimeTrackBar.Min := 0;
     VerticalTimeTrackBar.Max := 1000;
-    FState.SelectedCommitTime := CommitUnixTime(RepoEdit.Text, CenterCommit);
-    VerticalTimeTrackBar.Position :=
-      CurrentCommitToVerticalSlider;
-    VerticalTimeTrackBar.Enabled := FState.NewestCommitTime > FState.OldestCommitTime;
+    VerticalTimeTrackBar.Position := CurrentCommitToVerticalSlider;
+    VerticalTimeTrackBar.Enabled :=
+      FState.NewestCommitTime > FState.OldestCommitTime;
   finally
     FLoadingTimeline := False;
   end;
@@ -1004,7 +890,7 @@ end;
 
 procedure TMainForm.EnsureCurrentPathExists;
 begin
-  EnsurePathExistsAtCommit(RepoEdit.Text, FState.CommitHash, FState.CurrentPath);
+  EnsureStateCurrentPath(FState);
 end;
 
 
@@ -1220,20 +1106,8 @@ end;
 
 procedure TMainForm.SelectTimelineIndex(Index: Integer);
 begin
-  if FState.Timeline.Count = 0 then
+  if not SelectStateTimelineIndex(FState, Index) then
     Exit;
-
-  if Index < 0 then
-    Index := 0;
-  if Index >= FState.Timeline.Count then
-    Index := FState.Timeline.Count - 1;
-
-  FState.PreviousCommitHash := FState.CommitHash;
-  FState.CommitHash := Trim(FState.Timeline[Index]);
-
-  FState.CurrentBranchPosition := FState.BranchIndex.IndexOf(FState.CommitHash);
-  if FState.CurrentBranchPosition < 0 then
-    FState.CurrentBranchPosition := 0;
 
   FLoadingTimeline := True;
   try
@@ -1267,48 +1141,8 @@ begin
 end;
 
 procedure TMainForm.UpdateForkInfo;
-var
-  RefTip: string;
-  RefTipIndex: Integer;
 begin
-  FState.BranchCommitCount := FState.BranchIndex.Count;
-
-  if (Trim(BranchEdit.Text) = '') or
-     SameText(Trim(BranchEdit.Text), 'master') then
-    Exit;
-
-  if BranchEdit.Items.IndexOf('master') < 0 then
-    Exit;
-
-  FState.ForkHash := FindMergeBase(
-    RepoEdit.Text,
-    'master',
-    BranchEdit.Text
-  );
-
-  if FState.ForkHash <> '' then
-    FState.ForkIndex := FState.BranchIndex.IndexOf(FState.ForkHash);
-
-  { BuildTimeline already contains the selected branch's complete ordered
-    path.  If the branch ref tip is not the end of that path, the next commit
-    is the merge where the branch rejoins the continuation. }
-  RefTip := BranchTip(RepoEdit.Text, BranchEdit.Text);
-  RefTipIndex := FState.BranchIndex.IndexOf(RefTip);
-
-  if (RefTipIndex >= 0) and
-     (RefTipIndex < FState.BranchIndex.Count - 1) then
-  begin
-    FState.MergeIndex := RefTipIndex + 1;
-    FState.MergeHash := FState.BranchIndex[FState.MergeIndex];
-  end;
-
-  if FState.ForkIndex >= 0 then
-  begin
-    if FState.MergeIndex > FState.ForkIndex then
-      FState.AfterForkCount := FState.MergeIndex - FState.ForkIndex - 1
-    else
-      FState.AfterForkCount := FState.BranchIndex.Count - FState.ForkIndex - 1;
-  end;
+  UpdateStateForkInfo(FState, BranchEdit.Items);
 end;
 
 
@@ -1718,14 +1552,7 @@ end;
 
 procedure TMainForm.BuildEntryStates(const FromCommit, ToCommit: string);
 begin
-  BuildDirectoryEntryStates(
-    RepoEdit.Text,
-    FromCommit,
-    ToCommit,
-    FState.CurrentPath,
-    FState.EntryStates,
-    FState.DeletedEntries
-  );
+  BuildStateEntryStates(FState, FromCommit, ToCommit);
 end;
 
 
@@ -1738,57 +1565,21 @@ end;
 
 procedure TMainForm.LoadCurrentDirectory;
 var
-  Entries, DisplayEntries: TStringList;
+  DisplayEntries: TStringList;
   I: Integer;
-  RawEntry, EntryName, ChangeState, DisplayEntry: string;
 begin
   if FState.CommitHash = '' then
     Exit;
 
-  Entries := TStringList.Create;
   DisplayEntries := TStringList.Create;
   try
-    ListDirectoryEntries(
-      RepoEdit.Text,
-      FState.CommitHash,
-      FState.CurrentPath,
-      Entries
-    );
-
-    DisplayEntries.Sorted := True;
-    DisplayEntries.CaseSensitive := False;
-
-    for I := 0 to Entries.Count - 1 do
-    begin
-      RawEntry := Entries[I];
-      EntryName := RawEntry;
-
-      while (Length(EntryName) > 0) and
-            (EntryName[Length(EntryName)] = '/') do
-        Delete(EntryName, Length(EntryName), 1);
-
-      ChangeState := FState.EntryStates.Values[EntryName];
-
-      if ChangeState = 'added' then
-        DisplayEntry := RawEntry + ' [added]'
-      else if ChangeState = 'modified' then
-        DisplayEntry := RawEntry + ' [modified]'
-      else
-        DisplayEntry := RawEntry;
-
-      DisplayEntries.Add(DisplayEntry);
-    end;
-
-    for I := 0 to FState.DeletedEntries.Count - 1 do
-      DisplayEntries.Add(FState.DeletedEntries[I] + ' [deleted]');
+    BuildStateDirectoryDisplay(FState, DisplayEntries);
 
     TreeList.Items.BeginUpdate;
     try
       TreeList.Items.Clear;
-
       if FState.CurrentPath <> '' then
         TreeList.Items.Add('../');
-
       for I := 0 to DisplayEntries.Count - 1 do
         TreeList.Items.Add(DisplayEntries[I]);
     finally
@@ -1801,7 +1592,6 @@ begin
       PathLabel.Caption := 'Path: /' + FState.CurrentPath;
   finally
     DisplayEntries.Free;
-    Entries.Free;
   end;
 end;
 
