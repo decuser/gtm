@@ -48,6 +48,7 @@ clean:
 repo-clean:
 	git rm -r --cached --ignore-unmatch bin gui/lib gui/backup
 	git rm --cached --ignore-unmatch gui/*.lps gui/*.res
+	git rm --cached --ignore-unmatch '*.o' '*.ppu' '*.compiled'
 
 baseline:
 	@set -eu; \
