@@ -133,7 +133,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("mounted %s at %s\n", fullCommit[:12], mountpoint)
 	server.Wait()
 }
 

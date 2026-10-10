@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, DateUtils, Forms, Controls, StdCtrls, Buttons, Dialogs, ComCtrls, LCLIntf,
   LCLType,
-  Graphics, Menus, ExtCtrls, gtmcore, gtmmount, gtmexec, gtmstate;
+  Graphics, Menus, ExtCtrls, gtmcore, gtmmount, gtmexec, gtmstate, gtmkeys;
 
 type
   TMainForm = class(TForm)
@@ -80,6 +80,7 @@ type
     procedure SnapshotMountButtonClick(Sender: TObject);
     procedure SnapshotUnmountButtonClick(Sender: TObject);
     procedure SnapshotMountsButtonClick(Sender: TObject);
+    procedure KeyBindingsMenuItemClick(Sender: TObject);
     procedure AboutMenuItemClick(Sender: TObject);
     procedure BranchEditChange(Sender: TObject);
     procedure TagButtonClick(Sender: TObject);
@@ -576,6 +577,47 @@ end;
 procedure TMainForm.SelectTagMenuItemClick(Sender: TObject);
 begin
   TagButtonClick(Sender);
+end;
+
+procedure TMainForm.KeyBindingsMenuItemClick(Sender: TObject);
+var
+  Dialog: TForm;
+  ListBox: TListBox;
+  CloseButton: TButton;
+  Lines: TStringList;
+begin
+  Lines := TStringList.Create;
+  try
+    BuildGTMMainKeyBindingLines(Lines);
+
+    Dialog := TForm.CreateNew(Self);
+    try
+      Dialog.Caption := 'Key Bindings';
+      Dialog.Position := poMainFormCenter;
+      Dialog.BorderStyle := bsSizeToolWin;
+      Dialog.ClientWidth := 520;
+      Dialog.ClientHeight := 560;
+
+      ListBox := TListBox.Create(Dialog);
+      ListBox.Parent := Dialog;
+      ListBox.Align := alClient;
+      ListBox.Font.Name := 'Monospace';
+      ListBox.Items.Assign(Lines);
+
+      CloseButton := TButton.Create(Dialog);
+      CloseButton.Parent := Dialog;
+      CloseButton.Align := alBottom;
+      CloseButton.Height := 36;
+      CloseButton.Caption := 'Close';
+      CloseButton.ModalResult := mrClose;
+
+      Dialog.ShowModal;
+    finally
+      Dialog.Free;
+    end;
+  finally
+    Lines.Free;
+  end;
 end;
 
 procedure TMainForm.AboutMenuItemClick(Sender: TObject);
@@ -1340,88 +1382,104 @@ begin
   StepNavigation(-1);
 end;
 
+function GUIAbstractKey(Key: Word): TGTMKey;
+begin
+  case Key of
+    VK_LEFT:   Result := gkLeft;
+    VK_RIGHT:  Result := gkRight;
+    VK_UP:     Result := gkUp;
+    VK_DOWN:   Result := gkDown;
+    VK_HOME:   Result := gkHome;
+    VK_END:    Result := gkEnd;
+    VK_PRIOR:  Result := gkPageUp;
+    VK_NEXT:   Result := gkPageDown;
+    VK_BACK:   Result := gkBackspace;
+    VK_RETURN: Result := gkEnter;
+    VK_F1:     Result := gkF1;
+    VK_F2:     Result := gkF2;
+    VK_F10:    Result := gkF10;
+  else
+    Result := gkNone;
+  end;
+end;
+
+function GUIModifiers(Shift: TShiftState): TGTMKeyModifiers;
+begin
+  Result := [];
+  if ssCtrl in Shift then Include(Result, gkmCtrl);
+  if ssShift in Shift then Include(Result, gkmShift);
+  if ssAlt in Shift then Include(Result, gkmAlt);
+end;
+
+function GUIChar(Key: Word; Shift: TShiftState): Char;
+begin
+  Result := #0;
+  if (Key >= Ord('A')) and (Key <= Ord('Z')) then
+  begin
+    Result := Chr(Key);
+    if not (ssShift in Shift) then
+      Result := Chr(Ord(Result) + Ord('a') - Ord('A'));
+  end;
+end;
+
 procedure TMainForm.FormKeyDown(Sender: TObject; var Key: Word;
   Shift: TShiftState);
 var
   Direction: Integer;
+  KeyAction: TGTMKeyAction;
 begin
-  { GTM navigation is Ctrl-only at form level.
-    Plain navigation keys are left to the browser/control that owns focus. }
-  if not (ssCtrl in Shift) then
-    Exit;
+  KeyAction := GTMMainKeyAction(GUIAbstractKey(Key), GUIChar(Key, Shift),
+    GUIModifiers(Shift));
 
-  { Ctrl-Home / Ctrl-End select first / last commit. }
-  if Key = VK_HOME then
-  begin
-    FNavTimer.Enabled := False;
-    FNavDirection := 0;
-    FNavHoldTicks := 0;
-    FNavRepeated := False;
-    FNavKey := 0;
-    if FState.BranchIndex.Count > 0 then
-      SelectCommitHash(FState.BranchIndex[0]);
-    Key := 0;
-    Exit;
-  end;
+  case KeyAction of
+    gaFirstCommit:
+      begin
+        FNavTimer.Enabled := False;
+        FNavDirection := 0;
+        FNavHoldTicks := 0;
+        FNavRepeated := False;
+        FNavKey := 0;
+        if FState.BranchIndex.Count > 0 then
+          SelectCommitHash(FState.BranchIndex[0]);
+        Key := 0;
+        Exit;
+      end;
 
-  if Key = VK_END then
-  begin
-    FNavTimer.Enabled := False;
-    FNavDirection := 0;
-    FNavHoldTicks := 0;
-    FNavRepeated := False;
-    FNavKey := 0;
-    if FState.BranchIndex.Count > 0 then
-      SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
-    Key := 0;
-    Exit;
-  end;
+    gaLastCommit, gaLatestTime:
+      begin
+        FNavTimer.Enabled := False;
+        FNavDirection := 0;
+        FNavHoldTicks := 0;
+        FNavRepeated := False;
+        FNavKey := 0;
+        if FState.BranchIndex.Count > 0 then
+          SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
+        Key := 0;
+        Exit;
+      end;
 
-  { Ctrl-PageUp = latest/newest time; Ctrl-PageDown = earliest/oldest. }
-  if Key = VK_PRIOR then
-  begin
-    FNavTimer.Enabled := False;
-    FNavDirection := 0;
-    FNavHoldTicks := 0;
-    FNavRepeated := False;
-    FNavKey := 0;
-    if FState.BranchIndex.Count > 0 then
-      SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
-    Key := 0;
-    Exit;
-  end;
+    gaEarliestTime:
+      begin
+        FNavTimer.Enabled := False;
+        FNavDirection := 0;
+        FNavHoldTicks := 0;
+        FNavRepeated := False;
+        FNavKey := 0;
+        if FState.BranchIndex.Count > 0 then
+          SelectCommitHash(FState.BranchIndex[0]);
+        Key := 0;
+        Exit;
+      end;
 
-  if Key = VK_NEXT then
-  begin
-    FNavTimer.Enabled := False;
-    FNavDirection := 0;
-    FNavHoldTicks := 0;
-    FNavRepeated := False;
-    FNavKey := 0;
-    if FState.BranchIndex.Count > 0 then
-      SelectCommitHash(FState.BranchIndex[0]);
-    Key := 0;
-    Exit;
-  end;
+    gaCommitBackward, gaTimeBackward:
+      Direction := -1;
 
-  Direction := 0;
-
-  { Horizontal slider: older/newer. }
-  if Key = VK_LEFT then
-    Direction := -1
-  else if Key = VK_RIGHT then
-    Direction := 1
-
-  { Vertical slider follows the visual time axis. }
-  else if Key = VK_UP then
-    Direction := -1
-  else if Key = VK_DOWN then
-    Direction := 1
+    gaCommitForward, gaTimeForward:
+      Direction := 1;
   else
     Exit;
+  end;
 
-  { Ignore OS key-repeat events; our timer provides the same acceleration
-    used by the TUI: 1, 2, 5, then 10 commits per step. }
   if (FNavKey = Key) and (FNavDirection = Direction) then
   begin
     Key := 0;
@@ -1436,7 +1494,6 @@ begin
 
   StepNavigation(Direction);
   FNavTimer.Enabled := True;
-
   Key := 0;
 end;
 
@@ -2172,26 +2229,47 @@ end;
 
 procedure TMainForm.TreeListKeyDown(Sender: TObject; var Key: Word;
   Shift: TShiftState);
+var
+  KeyAction: TGTMKeyAction;
 begin
-  { Ctrl-navigation belongs to the GTM sliders and is handled by the form. }
-  if ssCtrl in Shift then
+  KeyAction := GTMMainKeyAction(GUIAbstractKey(Key), GUIChar(Key, Shift),
+    GUIModifiers(Shift));
+
+  case KeyAction of
+    gaParentDirectory:
+      GoParent;
+
+    gaEnterDirectory:
+      TreeListDblClick(TreeList);
+
+    gaOpenFile:
+      OpenHistoricalFile(SelectedHistoricalPath);
+
+    gaSaveFile:
+      SaveAsMenuItemClick(Sender);
+
+    gaFileHistory:
+      HistoryMenuItemClick(Sender);
+
+    gaVisualDiff:
+      VisualDiffMenuItemClick(Sender);
+
+    gaMountCurrent:
+      MountCurrentSnapshot;
+
+    gaShowMounts:
+      MountedSnapshotsMenuItemClick(Sender);
+
+    gaUnmountCurrent:
+      SnapshotUnmountButtonClick(Sender);
+
+    gaUnmountAll:
+      UnmountAllMenuItemClick(Sender);
+  else
     Exit;
-
-  case Key of
-    VK_LEFT, VK_BACK:
-      begin
-        GoParent;
-        Key := 0;
-      end;
-
-    VK_RIGHT, VK_RETURN:
-      begin
-        TreeListDblClick(TreeList);
-        Key := 0;
-      end;
-
-    { Up/Down/Home/End are the list box's native browser navigation. }
   end;
+
+  Key := 0;
 end;
 
 procedure TMainForm.TreeListDblClick(Sender: TObject);

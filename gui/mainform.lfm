@@ -368,6 +368,10 @@ object MainForm: TMainForm
     end
     object HelpMenu: TMenuItem
       Caption = 'Help'
+      object KeyBindingsMenuItem: TMenuItem
+        Caption = 'Key Bindings...'
+        OnClick = KeyBindingsMenuItemClick
+      end
       object AboutMenuItem: TMenuItem
         Caption = 'About...'
         OnClick = AboutMenuItemClick
