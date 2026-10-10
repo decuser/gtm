@@ -105,8 +105,17 @@ const
 
 function BindingMatches(const B: TGTMKeyBinding; Key: TGTMKey; Ch: Char;
   Modifiers: TGTMKeyModifiers): Boolean;
+var
+  EffectiveModifiers: TGTMKeyModifiers;
 begin
-  Result := (B.Modifiers = Modifiers) and
+  EffectiveModifiers := Modifiers;
+
+  { For printable character bindings, case already represents Shift.
+    Treat 'M' as the binding, not "Shift + M" as a separate modifier chord. }
+  if Ch <> #0 then
+    Exclude(EffectiveModifiers, gkmShift);
+
+  Result := (B.Modifiers = EffectiveModifiers) and
     (((B.Key <> gkNone) and (B.Key = Key)) or
      ((B.Ch <> #0) and (B.Ch = Ch)));
 end;

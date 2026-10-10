@@ -145,6 +145,21 @@ object MainForm: TMainForm
     ParentShowHint = False
     OnClick = SnapshotMountsButtonClick
   end
+  object SnapshotUnmountAllButton: TSpeedButton
+    Left = 1140
+    Height = 38
+    Hint = 'Unmount All Snapshots'
+    Top = 144
+    Width = 28
+    Caption = ''
+    Enabled = False
+    Flat = True
+    Font.Height = -22
+    ShowHint = True
+    ParentFont = False
+    ParentShowHint = False
+    OnClick = SnapshotUnmountAllButtonClick
+  end
   object FirstButton: TButton
     Left = 24
     Height = 45

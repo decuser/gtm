@@ -57,6 +57,7 @@ type
     SnapshotMountButton: TSpeedButton;
     SnapshotUnmountButton: TSpeedButton;
     SnapshotMountsButton: TSpeedButton;
+    SnapshotUnmountAllButton: TSpeedButton;
     TimeEdit: TEdit;
     TimeLabel: TLabel;
     TimeTrackBar: TTrackBar;
@@ -80,6 +81,7 @@ type
     procedure SnapshotMountButtonClick(Sender: TObject);
     procedure SnapshotUnmountButtonClick(Sender: TObject);
     procedure SnapshotMountsButtonClick(Sender: TObject);
+    procedure SnapshotUnmountAllButtonClick(Sender: TObject);
     procedure KeyBindingsMenuItemClick(Sender: TObject);
     procedure AboutMenuItemClick(Sender: TObject);
     procedure BranchEditChange(Sender: TObject);
@@ -188,6 +190,7 @@ type
       out TempFile: string);
     function JoinRepoPath(const BasePath, EntryName: string): string;
     procedure MountCurrentSnapshot;
+    procedure BuildUnmountAllGlyph(AEnabled: Boolean);
     procedure UpdateSnapshotMountToggle;
     procedure RefreshMountList;
     procedure MountOpenClick(Sender: TObject);
@@ -229,6 +232,47 @@ begin
 end;
 
 
+procedure TMainForm.BuildUnmountAllGlyph(AEnabled: Boolean);
+var
+  B: TBitmap;
+  P: array[0..2] of TPoint;
+begin
+  B := TBitmap.Create;
+  try
+    B.SetSize(18, 18);
+    B.Transparent := True;
+    B.TransparentColor := clFuchsia;
+
+    B.Canvas.Brush.Color := clFuchsia;
+    B.Canvas.FillRect(0, 0, B.Width, B.Height);
+
+    if AEnabled then
+    begin
+      B.Canvas.Pen.Color := clWindowText;
+      B.Canvas.Brush.Color := clWindowText;
+    end
+    else
+    begin
+      B.Canvas.Pen.Color := clGrayText;
+      B.Canvas.Brush.Color := clGrayText;
+    end;
+
+    P[0] := Point(9, 3);
+    P[1] := Point(3, 11);
+    P[2] := Point(15, 11);
+    B.Canvas.Polygon(P);
+
+    B.Canvas.Pen.Width := 2;
+    B.Canvas.Line(3, 15, 15, 15);
+
+    SnapshotUnmountAllButton.Glyph.Assign(B);
+    SnapshotUnmountAllButton.Caption := '';
+  finally
+    B.Free;
+  end;
+end;
+
+
 procedure TMainForm.UpdateSnapshotMountToggle;
 var
   HasSnapshot, Mounted: Boolean;
@@ -244,6 +288,10 @@ begin
   SnapshotMountButton.Enabled := HasSnapshot and (not Mounted);
   SnapshotUnmountButton.Enabled := HasSnapshot and Mounted;
   SnapshotMountsButton.Enabled := (FMounts <> nil) and (FMounts.Count > 0);
+  SnapshotUnmountAllButton.Enabled := (FMounts <> nil) and (FMounts.Count > 0);
+  BuildUnmountAllGlyph(SnapshotUnmountAllButton.Enabled);
+  MountedSnapshotsMenuItem.Enabled := (FMounts <> nil) and (FMounts.Count > 0);
+  UnmountAllMenuItem.Enabled := (FMounts <> nil) and (FMounts.Count > 0);
 end;
 
 
@@ -282,6 +330,11 @@ end;
 procedure TMainForm.SnapshotMountsButtonClick(Sender: TObject);
 begin
   MountedSnapshotsMenuItemClick(Sender);
+end;
+
+procedure TMainForm.SnapshotUnmountAllButtonClick(Sender: TObject);
+begin
+  UnmountAllMenuItemClick(Sender);
 end;
 
 
@@ -1430,6 +1483,41 @@ var
 begin
   KeyAction := GTMMainKeyAction(GUIAbstractKey(Key), GUIChar(Key, Shift),
     GUIModifiers(Shift));
+
+  { Mount commands are global GTM commands, except while the user is typing
+    in one of the editable selector fields.  KeyPreview means the form sees
+    these before the focused browser control. }
+  if not ((ActiveControl = RepoEdit) or
+          (ActiveControl = TimeEdit) or
+          (ActiveControl = BranchEdit)) then
+  begin
+    case KeyAction of
+      gaMountCurrent:
+        begin
+          MountCurrentSnapshot;
+          Key := 0;
+          Exit;
+        end;
+      gaShowMounts:
+        begin
+          MountedSnapshotsMenuItemClick(Sender);
+          Key := 0;
+          Exit;
+        end;
+      gaUnmountCurrent:
+        begin
+          SnapshotUnmountButtonClick(Sender);
+          Key := 0;
+          Exit;
+        end;
+      gaUnmountAll:
+        begin
+          UnmountAllMenuItemClick(Sender);
+          Key := 0;
+          Exit;
+        end;
+    end;
+  end;
 
   case KeyAction of
     gaFirstCommit:

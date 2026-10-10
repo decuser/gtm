@@ -1,4 +1,4 @@
-# Build products
+# Build output
 /bin/
 /gui/lib/
 /gui/backup/
@@ -7,7 +7,13 @@
 /gui/*.lps
 /gui/*.res
 
-# Pascal compiler products
+# Compiler/linker products
 *.o
 *.ppu
 *.compiled
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe

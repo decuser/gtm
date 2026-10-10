@@ -1,6 +1,4 @@
 FPC ?= fpc
-SRC := src/gtm.lpr
-BIN := bin/gtm
 GO ?= go
 MOUNT_BIN := bin/gtm-mount
 TUI_SRC := tui/gtm-tui.lpr
@@ -17,17 +15,13 @@ PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 
-.PHONY: all cli gui tui mount install clean repo-clean repo-purge-binaries baseline version
+.PHONY: all gui tui mount install clean repo-clean repo-purge-binaries baseline version
 
-all: cli
+all: gui tui mount
 
 version:
 	@mkdir -p bin
 	@printf "const GTMVersion = '%s';\n" "$(VERSION)" > "$(VERSION_INC)"
-
-cli: version
-	mkdir -p bin
-	$(FPC) -Fucore -FEbin -FUbin -Fibin $(SRC)
 
 gui: version
 	mkdir -p bin
@@ -42,7 +36,7 @@ mount:
 	mkdir -p bin
 	$(GO) build -o $(MOUNT_BIN) ./mount
 
-install: gui tui mount
+install: all
 	$(INSTALL) -d "$(DESTDIR)$(BINDIR)"
 	$(INSTALL) -m 755 bin/gtm-gui bin/gtm-tui bin/gtm-mount "$(DESTDIR)$(BINDIR)/"
 
