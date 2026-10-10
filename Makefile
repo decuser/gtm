@@ -13,7 +13,11 @@ SOURCE_DIR_NAME := $(notdir $(CURDIR))
 BASELINE_NAME := gtm-baseline-$(VERSION)
 BASELINE_ARCHIVE := $(DIST_PARENT)/$(BASELINE_NAME).tar.gz
 
-.PHONY: all cli gui tui mount clean repo-clean baseline version
+PREFIX ?= $(HOME)/.local
+BINDIR ?= $(PREFIX)/bin
+INSTALL ?= install
+
+.PHONY: all cli gui tui mount install clean repo-clean repo-purge-binaries baseline version
 
 all: cli
 
@@ -38,17 +42,26 @@ mount:
 	mkdir -p bin
 	$(GO) build -o $(MOUNT_BIN) ./mount
 
+install: gui tui mount
+	$(INSTALL) -d "$(DESTDIR)$(BINDIR)"
+	$(INSTALL) -m 755 bin/gtm-gui bin/gtm-tui bin/gtm-mount "$(DESTDIR)$(BINDIR)/"
+
 clean:
 	rm -rf bin
 	rm -rf gui/lib
 	rm -rf gui/backup
 	rm -f gui/*.lps gui/*.res
 
-# One-time source-control cleanup: stop tracking generated/editor files.
+# Current-tree cleanup only. History is unchanged.
 repo-clean:
 	git rm -r --cached --ignore-unmatch bin gui/lib gui/backup
 	git rm --cached --ignore-unmatch gui/*.lps gui/*.res
 	git rm --cached --ignore-unmatch '*.o' '*.ppu' '*.compiled'
+
+# One-time repository surgery: remove all build/binary artifacts from every
+# reachable branch/tag, then repack. Creates a bundle backup beside the repo.
+repo-purge-binaries:
+	./tools/purge-binaries-from-history.sh
 
 baseline:
 	@set -eu; \
