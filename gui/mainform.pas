@@ -112,6 +112,8 @@ type
       Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
     procedure VerticalTimeTrackBarKeyUp(Sender: TObject; var Key: Word;
       Shift: TShiftState);
+    procedure TreeListKeyDown(Sender: TObject; var Key: Word;
+      Shift: TShiftState);
     procedure TreeListDblClick(Sender: TObject);
     procedure TreeListDrawItem(Control: TWinControl; Index: Integer;
       ARect: TRect; State: TOwnerDrawState);
@@ -1329,40 +1331,83 @@ procedure TMainForm.FormKeyDown(Sender: TObject; var Key: Word;
 var
   Direction: Integer;
 begin
-  Direction := 0;
-
-  case Key of
-    VK_LEFT, VK_DOWN:
-      Direction := -1;
-    VK_RIGHT, VK_UP:
-      Direction := 1;
-  else
+  { GTM navigation is Ctrl-only at form level.
+    Plain navigation keys are left to the browser/control that owns focus. }
+  if not (ssCtrl in Shift) then
     Exit;
-  end;
 
-  { Ctrl+arrow means endpoint on the selected branch path. }
-  if ssCtrl in Shift then
+  { Ctrl-Home / Ctrl-End select first / last commit. }
+  if Key = VK_HOME then
   begin
     FNavTimer.Enabled := False;
     FNavDirection := 0;
     FNavHoldTicks := 0;
+    FNavRepeated := False;
     FNavKey := 0;
-
     if FState.BranchIndex.Count > 0 then
-    begin
-      if Direction < 0 then
-        SelectCommitHash(FState.BranchIndex[0])
-      else
-        SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
-    end;
-
+      SelectCommitHash(FState.BranchIndex[0]);
     Key := 0;
     Exit;
   end;
 
-  { The OS may send repeated KeyDown events while a key is held.  Ignore
-    those and let the same timer used by the mouse navigation buttons do
-    the accelerating repeat. }
+  if Key = VK_END then
+  begin
+    FNavTimer.Enabled := False;
+    FNavDirection := 0;
+    FNavHoldTicks := 0;
+    FNavRepeated := False;
+    FNavKey := 0;
+    if FState.BranchIndex.Count > 0 then
+      SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
+    Key := 0;
+    Exit;
+  end;
+
+  { Ctrl-PageUp = latest/newest time; Ctrl-PageDown = earliest/oldest. }
+  if Key = VK_PRIOR then
+  begin
+    FNavTimer.Enabled := False;
+    FNavDirection := 0;
+    FNavHoldTicks := 0;
+    FNavRepeated := False;
+    FNavKey := 0;
+    if FState.BranchIndex.Count > 0 then
+      SelectCommitHash(FState.BranchIndex[FState.BranchIndex.Count - 1]);
+    Key := 0;
+    Exit;
+  end;
+
+  if Key = VK_NEXT then
+  begin
+    FNavTimer.Enabled := False;
+    FNavDirection := 0;
+    FNavHoldTicks := 0;
+    FNavRepeated := False;
+    FNavKey := 0;
+    if FState.BranchIndex.Count > 0 then
+      SelectCommitHash(FState.BranchIndex[0]);
+    Key := 0;
+    Exit;
+  end;
+
+  Direction := 0;
+
+  { Horizontal slider: older/newer. }
+  if Key = VK_LEFT then
+    Direction := -1
+  else if Key = VK_RIGHT then
+    Direction := 1
+
+  { Vertical slider follows the visual time axis. }
+  else if Key = VK_UP then
+    Direction := -1
+  else if Key = VK_DOWN then
+    Direction := 1
+  else
+    Exit;
+
+  { Ignore OS key-repeat events; our timer provides the same acceleration
+    used by the TUI: 1, 2, 5, then 10 commits per step. }
   if (FNavKey = Key) and (FNavDirection = Direction) then
   begin
     Key := 0;
@@ -1384,8 +1429,7 @@ end;
 procedure TMainForm.FormKeyUp(Sender: TObject; var Key: Word;
   Shift: TShiftState);
 begin
-  if (Key <> VK_LEFT) and (Key <> VK_RIGHT) and
-     (Key <> VK_UP) and (Key <> VK_DOWN) then
+  if (FNavKey = 0) or (Key <> FNavKey) then
     Exit;
 
   FNavTimer.Enabled := False;
@@ -2110,6 +2154,30 @@ begin
   if not VisualDiff(OldFile, NewFile, ErrorMessage) then
     MessageDlg('Unable to launch visual diff: ' + ErrorMessage,
       mtError, [mbOK], 0);
+end;
+
+procedure TMainForm.TreeListKeyDown(Sender: TObject; var Key: Word;
+  Shift: TShiftState);
+begin
+  { Ctrl-navigation belongs to the GTM sliders and is handled by the form. }
+  if ssCtrl in Shift then
+    Exit;
+
+  case Key of
+    VK_LEFT, VK_BACK:
+      begin
+        GoParent;
+        Key := 0;
+      end;
+
+    VK_RIGHT, VK_RETURN:
+      begin
+        TreeListDblClick(TreeList);
+        Key := 0;
+      end;
+
+    { Up/Down/Home/End are the list box's native browser navigation. }
+  end;
 end;
 
 procedure TMainForm.TreeListDblClick(Sender: TObject);

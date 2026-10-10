@@ -265,6 +265,7 @@ object MainForm: TMainForm
     TabOrder = 10
     TopIndex = -1
     OnDblClick = TreeListDblClick
+    OnKeyDown = TreeListKeyDown
     OnDrawItem = TreeListDrawItem
   end
   object VerticalTimeTrackBar: TTrackBar
