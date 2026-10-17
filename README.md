@@ -39,6 +39,16 @@ The CLI entry point is in `src/gtm.lpr`. It accepts repository, branch, and time
 
 Install the GUI, TUI, and mount utility into `~/.local/bin` with `make install` (or override `PREFIX`).
 
+## Screenshots
+
+**Graphical interface (Lazarus)**
+
+![GTM graphical interface](gtm-gui.png)
+
+**Terminal interface**
+
+![GTM terminal interface](gtm-tui.png)
+
 ## Repository structure
 
 | Path | Purpose |
